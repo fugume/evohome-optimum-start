@@ -62,7 +62,7 @@ Each completed preheat stores:
 
 - starting and ending room temperature;
 - target and elapsed minutes;
-- outdoor temperature; and
+- outdoor temperature (live or the configured fallback); and
 - whether the target was reached before the switchpoint.
 
 The integration keeps the latest 60 accepted cycles in Home Assistant's `.storage`
@@ -79,6 +79,12 @@ Predicted lead is:
 and is capped at 180 minutes by default. This is well suited to learning your normal
 55 °C flow-temperature setup. A material flow-temperature change changes the plant's
 performance; press `Reset learning` after such a change.
+
+An outdoor entity is optional. With none selected, the controller uses the configured
+assumed outdoor temperature (7 °C by default). It can still learn a useful base rate,
+but cannot learn weather compensation until a live source is added. A temperature
+sensor or a `weather.*` entity can be selected directly; for weather entities the
+integration reads the current `temperature` attribute.
 
 This model learns from the controller's own historical preheat cycles rather than
 querying Recorder. That keeps it independent of Recorder retention/purge settings and
@@ -133,14 +139,15 @@ Select:
 
 - **Evohome heating zone:** the room climate entity, not the whole-house controller.
 - **Evohome system controller:** the whole-house Evohome climate entity.
-- **Outdoor temperature sensor:** a reliable local outdoor sensor or weather-derived
-  temperature sensor.
+- **Outdoor temperature sensor or weather entity:** optionally select a reliable
+  temperature sensor or a `weather.*` entity. Leave it blank if you do not have one.
 
 Keep the initial defaults:
 
 | Setting | Initial value | Meaning |
 |---|---:|---|
 | Initial heating rate | 0.7 °C/h | Conservative starting estimate |
+| Assumed outdoor temperature | 7 °C | Used only when no live entity is selected |
 | Maximum lead | 180 min | Three-hour hard cap |
 | Warm-up delay | 10 min | Valve/radiator response time |
 | Safety margin | 10 min | Early-model uncertainty allowance |
@@ -161,7 +168,7 @@ Open the new device and inspect:
 - `Enabled`
 
 The `Status` entity's attributes also show the next switchpoint, scheduled targets,
-system/zone modes, outdoor temperature, whether the lead was capped, the learned
+system/zone modes, outdoor temperature and its source, whether the lead was capped, the learned
 outdoor slope, and the last cycle result.
 
 Useful states are:
@@ -204,6 +211,14 @@ preheat cycles. Confirm:
 The official Evohome cloud integration polls every five minutes by default, so status
 changes can lag. Prediction is checked every minute, but practical start-time
 resolution is bounded by the Evohome poll/update interval.
+
+### Add weather later
+
+You can begin with the 7 °C fallback. After adding any Home Assistant weather
+integration, open **Settings → Devices & services → Evohome Optimum Start → Configure**
+and select its `weather.*` entity as the outdoor source. Existing zone learning is
+kept. The controller will begin learning the outdoor-temperature effect as new cycles
+are collected.
 
 ## Scale to all zones
 

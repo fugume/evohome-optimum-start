@@ -8,7 +8,6 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     EntitySelector,
@@ -20,6 +19,7 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_CONTROLLER_ENTITY,
+    CONF_ASSUMED_OUTDOOR,
     CONF_INITIAL_RATE,
     CONF_MAX_LEAD,
     CONF_MINIMUM_RISE,
@@ -29,6 +29,7 @@ from .const import (
     CONF_WARMUP_DELAY,
     CONF_ZONE_ENTITY,
     DEFAULT_INITIAL_RATE,
+    DEFAULT_ASSUMED_OUTDOOR,
     DEFAULT_MAX_LEAD,
     DEFAULT_MINIMUM_RISE,
     DEFAULT_SAFETY_MARGIN,
@@ -59,10 +60,8 @@ SOURCE_SCHEMA = vol.Schema(
         vol.Required(CONF_CONTROLLER_ENTITY): EntitySelector(
             EntitySelectorConfig(domain="climate", integration="evohome")
         ),
-        vol.Required(CONF_OUTDOOR_ENTITY): EntitySelector(
-            EntitySelectorConfig(
-                domain="sensor", device_class=SensorDeviceClass.TEMPERATURE
-            )
+        vol.Optional(CONF_OUTDOOR_ENTITY): EntitySelector(
+            EntitySelectorConfig(domain=["sensor", "weather"])
         ),
     }
 )
@@ -73,6 +72,10 @@ def options_schema(
 ) -> vol.Schema:
     """Return advanced settings with current defaults."""
     fields: dict[Any, Any] = {
+        vol.Required(
+            CONF_ASSUMED_OUTDOOR,
+            default=values.get(CONF_ASSUMED_OUTDOOR, DEFAULT_ASSUMED_OUTDOOR),
+        ): _number(-20, 30, 0.5),
         vol.Required(
             CONF_INITIAL_RATE,
             default=values.get(CONF_INITIAL_RATE, DEFAULT_INITIAL_RATE),
@@ -99,6 +102,11 @@ def options_schema(
         ): _number(0.2, 1.0, 0.1),
     }
     if include_sources:
+        outdoor_marker = vol.Optional(CONF_OUTDOOR_ENTITY)
+        if values.get(CONF_OUTDOOR_ENTITY):
+            outdoor_marker = vol.Optional(
+                CONF_OUTDOOR_ENTITY, default=values[CONF_OUTDOOR_ENTITY]
+            )
         fields = {
             vol.Required(
                 CONF_CONTROLLER_ENTITY,
@@ -106,13 +114,8 @@ def options_schema(
             ): EntitySelector(
                 EntitySelectorConfig(domain="climate", integration="evohome")
             ),
-            vol.Required(
-                CONF_OUTDOOR_ENTITY,
-                default=values.get(CONF_OUTDOOR_ENTITY),
-            ): EntitySelector(
-                EntitySelectorConfig(
-                    domain="sensor", device_class=SensorDeviceClass.TEMPERATURE
-                )
+            outdoor_marker: EntitySelector(
+                EntitySelectorConfig(domain=["sensor", "weather"])
             ),
             **fields,
         }
@@ -126,7 +129,8 @@ def _validate_sources(hass: Any, values: dict[str, Any]) -> dict[str, str]:
     controller_id = values[CONF_CONTROLLER_ENTITY]
     zone = hass.states.get(zone_id)
     controller = hass.states.get(controller_id)
-    outdoor = hass.states.get(values[CONF_OUTDOOR_ENTITY])
+    outdoor_id = values.get(CONF_OUTDOOR_ENTITY)
+    outdoor = hass.states.get(outdoor_id) if outdoor_id else None
 
     zone_status = zone.attributes.get("status", {}) if zone else {}
     if not isinstance(zone_status, Mapping) or not {
@@ -140,11 +144,16 @@ def _validate_sources(hass: Any, values: dict[str, Any]) -> dict[str, str]:
         or "system_mode_status" not in controller_status
     ):
         errors[CONF_CONTROLLER_ENTITY] = "not_evohome_controller"
-    if outdoor is None or outdoor.state in ("unknown", "unavailable"):
+    if outdoor_id and (outdoor is None or outdoor.state in ("unknown", "unavailable")):
         errors[CONF_OUTDOOR_ENTITY] = "outdoor_unavailable"
-    else:
+    elif outdoor_id and outdoor is not None:
         try:
-            float(outdoor.state)
+            value = (
+                outdoor.attributes.get("temperature")
+                if outdoor.domain == "weather"
+                else outdoor.state
+            )
+            float(value)
         except (TypeError, ValueError):
             errors[CONF_OUTDOOR_ENTITY] = "outdoor_unavailable"
     if zone_id == controller_id:
@@ -209,6 +218,9 @@ class EvohomeOptimumStartOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
         current = {**self._entry.data, **self._entry.options}
         if user_input is not None:
+            # Store an explicit empty value when the optional entity is cleared so
+            # it overrides a value retained in the original config-entry data.
+            user_input[CONF_OUTDOOR_ENTITY] = user_input.get(CONF_OUTDOOR_ENTITY, "")
             candidate = {**current, **user_input}
             errors = _validate_sources(self.hass, candidate)
             if not errors:

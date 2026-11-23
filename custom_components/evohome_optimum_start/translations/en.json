@@ -4,11 +4,11 @@
     "step": {
       "user": {
         "title": "Choose an Evohome zone",
-        "description": "Evohome keeps its schedule and all valve/boiler control. This helper only starts the next scheduled temperature early.",
+        "description": "Evohome keeps its schedule and all valve/boiler control. The outdoor source is optional; leave it blank to use an assumed temperature.",
         "data": {
           "zone_entity": "Evohome heating zone",
           "controller_entity": "Evohome system controller",
-          "outdoor_temperature_entity": "Outdoor temperature sensor"
+          "outdoor_temperature_entity": "Outdoor temperature sensor or weather entity (optional)"
         }
       },
       "parameters": {
@@ -16,7 +16,8 @@
         "description": "The defaults are deliberately conservative and can be changed later.",
         "data": {
           "controller_entity": "Evohome system controller",
-          "outdoor_temperature_entity": "Outdoor temperature sensor",
+          "outdoor_temperature_entity": "Outdoor temperature sensor or weather entity (optional)",
+          "assumed_outdoor_temperature": "Assumed outdoor temperature when no entity is selected (°C)",
           "initial_heating_rate": "Initial heating rate (°C/hour)",
           "maximum_lead_minutes": "Maximum lead (minutes)",
           "warmup_delay_minutes": "Radiator warm-up delay (minutes)",
@@ -29,7 +30,7 @@
     "error": {
       "not_evohome_zone": "Select an Evohome heating-zone climate entity. It must expose status.setpoints and status.setpoint_status.",
       "not_evohome_controller": "Select the Evohome system/controller climate entity. It must expose status.system_mode_status.",
-      "outdoor_unavailable": "The outdoor temperature entity is unavailable or is not numeric.",
+      "outdoor_unavailable": "The outdoor temperature or weather entity is unavailable or has no numeric current temperature.",
       "evohome_service_missing": "The official Evohome integration is not loaded or its set_zone_override action is unavailable."
     },
     "abort": {
@@ -42,7 +43,8 @@
         "title": "Optimum Start options",
         "data": {
           "controller_entity": "Evohome system controller",
-          "outdoor_temperature_entity": "Outdoor temperature sensor",
+          "outdoor_temperature_entity": "Outdoor temperature sensor or weather entity (optional)",
+          "assumed_outdoor_temperature": "Assumed outdoor temperature when no entity is selected (°C)",
           "initial_heating_rate": "Initial heating rate (°C/hour)",
           "maximum_lead_minutes": "Maximum lead (minutes)",
           "warmup_delay_minutes": "Radiator warm-up delay (minutes)",
@@ -55,7 +57,7 @@
     "error": {
       "not_evohome_zone": "The configured zone no longer exposes the expected Evohome status attributes.",
       "not_evohome_controller": "Select the Evohome system/controller climate entity.",
-      "outdoor_unavailable": "The outdoor temperature entity is unavailable or is not numeric.",
+      "outdoor_unavailable": "The outdoor temperature or weather entity is unavailable or has no numeric current temperature.",
       "evohome_service_missing": "The official Evohome integration is not loaded or its set_zone_override action is unavailable."
     }
   }

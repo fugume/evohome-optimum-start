@@ -10,6 +10,7 @@ PLATFORMS: Final = ["sensor", "binary_sensor", "switch", "button"]
 CONF_ZONE_ENTITY: Final = "zone_entity"
 CONF_CONTROLLER_ENTITY: Final = "controller_entity"
 CONF_OUTDOOR_ENTITY: Final = "outdoor_temperature_entity"
+CONF_ASSUMED_OUTDOOR: Final = "assumed_outdoor_temperature"
 CONF_INITIAL_RATE: Final = "initial_heating_rate"
 CONF_MAX_LEAD: Final = "maximum_lead_minutes"
 CONF_WARMUP_DELAY: Final = "warmup_delay_minutes"
@@ -18,6 +19,7 @@ CONF_TARGET_TOLERANCE: Final = "target_tolerance"
 CONF_MINIMUM_RISE: Final = "minimum_learning_rise"
 
 DEFAULT_INITIAL_RATE: Final = 0.7
+DEFAULT_ASSUMED_OUTDOOR: Final = 7.0
 DEFAULT_MAX_LEAD: Final = 180
 DEFAULT_WARMUP_DELAY: Final = 10
 DEFAULT_SAFETY_MARGIN: Final = 10

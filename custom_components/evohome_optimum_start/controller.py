@@ -22,6 +22,7 @@ from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .const import (
     CLIMATE_DOMAIN,
+    CONF_ASSUMED_OUTDOOR,
     CONF_CONTROLLER_ENTITY,
     CONF_INITIAL_RATE,
     CONF_MAX_LEAD,
@@ -32,6 +33,7 @@ from .const import (
     CONF_WARMUP_DELAY,
     CONF_ZONE_ENTITY,
     DEFAULT_INITIAL_RATE,
+    DEFAULT_ASSUMED_OUTDOOR,
     DEFAULT_MAX_LEAD,
     DEFAULT_MINIMUM_RISE,
     DEFAULT_SAFETY_MARGIN,
@@ -95,7 +97,10 @@ class ZoneController:
         self.config = dict(config)
         self.zone_entity = str(config[CONF_ZONE_ENTITY])
         self.controller_entity = str(config[CONF_CONTROLLER_ENTITY])
-        self.outdoor_entity = str(config[CONF_OUTDOOR_ENTITY])
+        self.outdoor_entity = str(config.get(CONF_OUTDOOR_ENTITY) or "")
+        self.assumed_outdoor = float(
+            config.get(CONF_ASSUMED_OUTDOOR, DEFAULT_ASSUMED_OUTDOOR)
+        )
         self.initial_rate = float(config.get(CONF_INITIAL_RATE, DEFAULT_INITIAL_RATE))
         self.maximum_lead = float(config.get(CONF_MAX_LEAD, DEFAULT_MAX_LEAD))
         self.warmup_delay = float(
@@ -150,7 +155,9 @@ class ZoneController:
         last_cycle = stored.get("last_cycle")
         self.last_cycle = last_cycle if isinstance(last_cycle, dict) else None
 
-        tracked = [self.zone_entity, self.controller_entity, self.outdoor_entity]
+        tracked = [self.zone_entity, self.controller_entity]
+        if self.outdoor_entity:
+            tracked.append(self.outdoor_entity)
         self._listeners.append(
             async_track_state_change_event(self.hass, tracked, self._state_changed)
         )
@@ -246,10 +253,14 @@ class ZoneController:
         return mode if isinstance(mode, str) else None
 
     def _outdoor_c(self, state: State) -> float | None:
-        value = _as_float(state.state)
+        if state.domain == "weather":
+            value = _as_float(state.attributes.get("temperature"))
+            unit = state.attributes.get("temperature_unit")
+        else:
+            value = _as_float(state.state)
+            unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
         if value is None:
             return None
-        unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
         if unit and unit != UnitOfTemperature.CELSIUS:
             try:
                 value = TemperatureConverter.convert(
@@ -258,6 +269,18 @@ class ZoneController:
             except ValueError:
                 return None
         return value if -50 <= value <= 60 else None
+
+    def _current_outdoor(self) -> tuple[float, str] | None:
+        """Return live outdoor temperature or the configured fallback."""
+        if not self.outdoor_entity:
+            return self.assumed_outdoor, "assumed"
+        outdoor_state = self.hass.states.get(self.outdoor_entity)
+        if not outdoor_state:
+            return None
+        outdoor_c = self._outdoor_c(outdoor_state)
+        if outdoor_c is None:
+            return None
+        return outdoor_c, self.outdoor_entity
 
     def _active_matches(self, zone: Mapping[str, Any]) -> bool:
         """Return whether the live override still looks like ours."""
@@ -492,8 +515,7 @@ class ZoneController:
             now = (now or datetime.now(UTC)).astimezone(UTC)
             zone_state = self.hass.states.get(self.zone_entity)
             controller_state = self.hass.states.get(self.controller_entity)
-            outdoor_state = self.hass.states.get(self.outdoor_entity)
-            if not zone_state or not controller_state or not outdoor_state:
+            if not zone_state or not controller_state:
                 self._set_snapshot(
                     status="waiting_for_entities", available=False, preheating=False
                 )
@@ -501,14 +523,15 @@ class ZoneController:
 
             zone = self._zone_data(zone_state)
             system_mode = self._system_mode(controller_state)
-            outdoor_c = self._outdoor_c(outdoor_state)
-            if zone is None or system_mode is None or outdoor_c is None:
+            outdoor = self._current_outdoor()
+            if zone is None or system_mode is None or outdoor is None:
                 self._set_snapshot(
                     status="invalid_or_unavailable_source_data",
                     available=False,
                     preheating=bool(self.active),
                 )
                 return
+            outdoor_c, outdoor_source = outdoor
 
             if self.active:
                 active = await self._handle_active(
@@ -536,6 +559,7 @@ class ZoneController:
                         current_temperature=zone["current"],
                         next_target=zone["next_target"],
                         outdoor_temperature=outdoor_c,
+                        outdoor_temperature_source=outdoor_source,
                         system_mode=system_mode,
                         zone_mode=zone["mode"],
                     )
@@ -551,6 +575,7 @@ class ZoneController:
                 "next_target": zone["next_target"],
                 "next_switch": zone["next_time"],
                 "outdoor_temperature": outdoor_c,
+                "outdoor_temperature_source": outdoor_source,
                 "system_mode": system_mode,
                 "zone_mode": zone["mode"],
             }

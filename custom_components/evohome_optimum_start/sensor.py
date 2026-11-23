@@ -93,7 +93,8 @@ class StatusSensor(OptimumStartEntity, SensorEntity):
         } | {
             "zone_entity": self.controller.zone_entity,
             "controller_entity": self.controller.controller_entity,
-            "outdoor_temperature_entity": self.controller.outdoor_entity,
+            "outdoor_temperature_entity": self.controller.outdoor_entity or None,
+            "assumed_outdoor_temperature": self.controller.assumed_outdoor,
         }
 
 
