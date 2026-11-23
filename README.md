@@ -1,0 +1,254 @@
+# Evohome Optimum Start for Home Assistant
+
+An installable, self-learning optimum-start controller for the official Home
+Assistant **Honeywell Total Connect Comfort (Europe)** / Evohome integration.
+
+It does one thing: for each configured room, it asks Evohome for the *next native
+scheduled setpoint* and starts that setpoint early enough for the room to be warm at
+the switchpoint. Evohome continues to own its schedules, TRVs, heat demand, boiler
+relay/modulation, and fail-safe behavior.
+
+Newly configured zones start **disabled**. No Evohome setting is changed until you
+review the diagnostic entities and turn on that zone's `Enabled` switch.
+
+## What is verified against current Home Assistant
+
+This implementation uses the current official Evohome entity contract:
+
+- A zone exposes `status.setpoints.this_sp_temp`, `next_sp_temp`, and
+  `next_sp_from`, plus `status.setpoint_status.setpoint_mode`.
+- The controller exposes `status.system_mode_status.mode`.
+- `evohome.set_zone_override` accepts `setpoint` and optional `duration`.
+- A duration of zero is a documented special case: the official integration fetches
+  the schedule and sets the override expiry to `next_sp_from`. Omitting `duration`
+  would instead create an indefinite override.
+- Evohome zones now also have a reset button in Home Assistant. This integration
+  does not need its entity ID; when it must cancel an override that it positively
+  identifies as its own, it uses the zone's standard `preset_mode: none`, which the
+  official integration maps to the Evohome zone reset API.
+
+Primary references:
+
+- [Home Assistant Evohome documentation](https://www.home-assistant.io/integrations/evohome/)
+- [Official `set_zone_override` action reference](https://www.home-assistant.io/actions/evohome.set_zone_override/)
+- [Current Home Assistant Evohome climate implementation](https://github.com/home-assistant/core/blob/dev/homeassistant/components/evohome/climate.py)
+- [Current action schema](https://github.com/home-assistant/core/blob/dev/homeassistant/components/evohome/services.py)
+
+## Safety behavior
+
+The controller will start a preheat only when all of these are true:
+
+1. Its own `Enabled` switch is on.
+2. The Evohome system mode is exactly `Auto` or `AutoWithReset`.
+3. The zone is in `FollowSchedule` (not a user temporary/permanent override).
+4. The next native switchpoint raises the scheduled temperature.
+5. The room is below that next target.
+6. The calculated start time has arrived and is no more than the configured cap
+   (three hours by default).
+
+It records the target, expiry, and start conditions before it sends an override. On
+subsequent updates it treats an override as its own only if the live temporary target
+still matches. A user changing the target takes ownership immediately: learning stops
+and the user override is left alone.
+
+If Away, Heating Off, Day Off, Custom, or another protected system mode begins during
+an owned preheat, the integration resets only its own zone override and stands down.
+Disabling the integration behaves the same way. At the normal schedule switchpoint,
+the zero-duration Evohome override expires by itself.
+
+## Learning model
+
+Each completed preheat stores:
+
+- starting and ending room temperature;
+- target and elapsed minutes;
+- outdoor temperature; and
+- whether the target was reached before the switchpoint.
+
+The integration keeps the latest 60 accepted cycles in Home Assistant's `.storage`
+area. It fits a small, recency-weighted model:
+
+`heating rate = rate at 10 °C outdoors + outdoor-temperature slope`
+
+The initial rate defaults to 0.7 °C/hour. With fewer than three samples, measured
+rates are blended conservatively with that value. Implausible/tiny cycles are ignored.
+Predicted lead is:
+
+`warm-up delay + temperature rise / predicted rate + safety margin`
+
+and is capped at 180 minutes by default. This is well suited to learning your normal
+55 °C flow-temperature setup. A material flow-temperature change changes the plant's
+performance; press `Reset learning` after such a change.
+
+This model learns from the controller's own historical preheat cycles rather than
+querying Recorder. That keeps it independent of Recorder retention/purge settings and
+ensures it learns only periods when the integration knows the requested target and
+expiry.
+
+## Installation
+
+### Manual installation (works with this download)
+
+1. Copy the directory
+   `custom_components/evohome_optimum_start` into Home Assistant's
+   `/config/custom_components/` directory.
+2. Restart Home Assistant.
+3. Open **Settings → Devices & services → Add integration**.
+4. Search for **Evohome Optimum Start**.
+
+The official Evohome integration must already be configured and its entities must be
+available. No Evohome username/password is used or stored by this integration.
+
+### HACS after placing this project in a Git repository
+
+Add the repository as a HACS custom repository of type **Integration**, install it,
+restart Home Assistant, and follow steps 3–4 above.
+
+## Configure and test one sample zone
+
+Start with a room that has a predictable morning temperature increase, such as the
+living room.
+
+### 1. Confirm the source data
+
+In **Developer Tools → Template**, replace the sample entity IDs:
+
+```jinja2
+{% set z = state_attr('climate.living_room', 'status') or {} %}
+{% set c = state_attr('climate.my_home', 'status') or {} %}
+Zone mode: {{ (z.get('setpoint_status') or {}).get('setpoint_mode') }}
+Current scheduled target: {{ (z.get('setpoints') or {}).get('this_sp_temp') }}
+Next target: {{ (z.get('setpoints') or {}).get('next_sp_temp') }}
+Next time: {{ (z.get('setpoints') or {}).get('next_sp_from') }}
+System mode: {{ (c.get('system_mode_status') or {}).get('mode') }}
+```
+
+Expected values include `FollowSchedule`, numeric temperatures, an ISO timestamp, and
+`Auto` (or `AutoWithReset`). If these are absent, update/reload the official Evohome
+integration before proceeding.
+
+### 2. Add the sample zone
+
+Select:
+
+- **Evohome heating zone:** the room climate entity, not the whole-house controller.
+- **Evohome system controller:** the whole-house Evohome climate entity.
+- **Outdoor temperature sensor:** a reliable local outdoor sensor or weather-derived
+  temperature sensor.
+
+Keep the initial defaults:
+
+| Setting | Initial value | Meaning |
+|---|---:|---|
+| Initial heating rate | 0.7 °C/h | Conservative starting estimate |
+| Maximum lead | 180 min | Three-hour hard cap |
+| Warm-up delay | 10 min | Valve/radiator response time |
+| Safety margin | 10 min | Early-model uncertainty allowance |
+| Target tolerance | 0.2 °C | Counts target as reached |
+| Minimum learning rise | 0.3 °C | Rejects noisy/tiny samples |
+
+### 3. Inspect while disabled
+
+Open the new device and inspect:
+
+- `Status`
+- `Predicted start`
+- `Lead time`
+- `Predicted heating rate`
+- `Learned base heating rate`
+- `Learning samples`
+- `Preheating`
+- `Enabled`
+
+The `Status` entity's attributes also show the next switchpoint, scheduled targets,
+system/zone modes, outdoor temperature, whether the lead was capped, the learned
+outdoor slope, and the last cycle result.
+
+Useful states are:
+
+- `disabled` — safe initial state;
+- `waiting_for_predicted_start` — normal and ready;
+- `waiting_for_capped_start` — estimated need exceeds the configured cap;
+- `protected_manual_zone_override` — a user override is active;
+- `protected_system_mode_*` — not in Auto/AutoWithReset;
+- `preheating` — this integration owns a temporary override.
+
+### 4. Optional direct action check
+
+Home Assistant's official action can be checked independently in **Developer Tools →
+Actions**. Use a safe setpoint and this exact zero duration:
+
+```yaml
+action: evohome.set_zone_override
+target:
+  entity_id: climate.living_room
+data:
+  setpoint: 20
+  duration: "00:00:00"
+```
+
+The zone should report `TemporaryOverride`, expiring at the next schedule switchpoint.
+Press the official Evohome zone reset button afterwards if you do not want to wait.
+Do not omit `duration`: omission means indefinite/permanent.
+
+### 5. Enable one zone
+
+Turn on the Optimum Start device's `Enabled` switch. Watch the first two or three
+preheat cycles. Confirm:
+
+- the temporary override target equals the next scheduled target;
+- its expiry is the native next switchpoint;
+- the zone returns to `FollowSchedule` at that switchpoint; and
+- `Learning samples` increases after a useful temperature rise.
+
+The official Evohome cloud integration polls every five minutes by default, so status
+changes can lag. Prediction is checked every minute, but practical start-time
+resolution is bounded by the Evohome poll/update interval.
+
+## Scale to all zones
+
+For every additional room, choose **Add integration → Evohome Optimum Start** again.
+Each entry is independent: it has its own enable switch, three-hour cap, learning
+history, predicted start, and diagnostics. Add and observe a few rooms at a time so
+you can see how simultaneous demand affects the learned rates.
+
+Do not copy Evohome schedules into Home Assistant. Do not create direct TRV or boiler
+automations for this feature. Leave Evohome Optimum Start disabled on the physical
+controller to prevent two optimizers from competing, but leave all ordinary Evohome
+schedules enabled.
+
+## Tuning guidance for the described Worcester/Evohome system
+
+- Keep the model at the normal ~55 °C flow temperature while it learns.
+- Leave Advanced Load Scaling as-is initially. If you later enable it or substantially
+  change flow temperature/weather compensation, reset learning in every zone.
+- Do not reduce the three-hour cap until diagnostics show ordinary calculated leads
+  stay well below it on cold days.
+- If rooms consistently arrive late after 10–15 accepted samples, increase safety
+  margin in five-minute increments. If consistently early, reduce it gradually.
+- A room that frequently heats while other zones call may learn a different apparent
+  rate from an isolated room. That is expected: the model learns observed whole-system
+  behavior, including boiler modulation and concurrent demand.
+
+## Removing or pausing
+
+- To pause one room, turn off its `Enabled` switch. If it owns a live preheat, only
+  that matching override is reset.
+- Removing the integration entry unloads the controller. Disable it first if it is
+  currently preheating.
+- Deleting the entry removes its entities. Home Assistant may retain its `.storage`
+  file; this contains only numeric learning samples and entity IDs, no credentials.
+
+## Local validation
+
+From this project directory:
+
+```bash
+python3 tools/validate.py
+python3 -m unittest discover -s tests -v
+```
+
+The validation checks Python syntax, JSON files, required integration files, and
+translation parity. Unit tests exercise sample rejection, regression, outdoor
+compensation, and the maximum-lead cap without needing a Home Assistant installation.
+

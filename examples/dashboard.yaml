@@ -1,0 +1,14 @@
+type: entities
+title: Living room optimum start
+entities:
+  # Replace these with the entity IDs created for your zone.
+  - entity: switch.living_room_optimum_start_enabled
+  - entity: sensor.living_room_optimum_start_status
+  - entity: sensor.living_room_optimum_start_predicted_start
+  - entity: sensor.living_room_optimum_start_lead_time
+  - entity: sensor.living_room_optimum_start_predicted_heating_rate
+  - entity: sensor.living_room_optimum_start_learned_base_heating_rate
+  - entity: sensor.living_room_optimum_start_learning_samples
+  - entity: binary_sensor.living_room_optimum_start_preheating
+  - entity: button.living_room_optimum_start_reset_learning
+
