@@ -99,6 +99,29 @@ querying Recorder. That keeps it independent of Recorder retention/purge setting
 ensures it learns only periods when the integration knows the requested target and
 expiry.
 
+### Prediction accuracy
+
+For every preheat it controls, the integration records the temperature observed at
+the scheduled switchpoint and calculates:
+
+- **temperature error:** actual minus target temperature, so a negative value means
+  the room was cold and a positive value means it was warm;
+- **arrival offset:** the first observed target-reach time relative to the
+  switchpoint, reported as minutes early or late; and
+- **on time:** whether the switchpoint temperature was within the zone's configured
+  target tolerance (0.2 °C by default).
+
+If a room is still cold, the integration passively observes it for up to two hours
+after the switchpoint to measure late arrival. This observation never changes the
+setpoint and stops if the user overrides the zone, the schedule changes, the system
+leaves Auto, or the zone controller is disabled.
+
+The status entity retains up to 60 outcomes and publishes rolling values over the
+latest ten: on-time percentage, mean absolute temperature error, warm/cold bias, and
+mean arrival offset. Evohome and room-temperature polling limit timing precision, so
+each outcome also records how late the switchpoint observation itself occurred.
+Resetting learning clears both heating samples and accuracy history.
+
 ## Installation
 
 Version 0.3.0 and later require Home Assistant 2026.11 or newer because they use Home
@@ -284,10 +307,10 @@ To install it as a separate dashboard:
 
 The overview shows configured/enabled counts and active preheats. The other tables
 show each zone's current and scheduled temperatures, next switch, predicted start,
-lead, learned rate, sample count, outdoor temperature, last cycle, and latest
-evaluation. Enable switches remain on the individual zone devices by design. A
-commented native entity-card example at the end of the file can be copied into the
-view if direct controls are wanted for a particular room.
+prediction accuracy, lead, learned rate, sample count, outdoor temperature, last
+cycle, and latest evaluation. Enable switches remain on the individual zone devices
+by design. A commented native entity-card example at the end of the file can be
+copied into the view if direct controls are wanted for a particular room.
 
 Do not copy Evohome schedules into Home Assistant. Do not create direct TRV or boiler
 automations for this feature. Leave Evohome Optimum Start disabled on the physical

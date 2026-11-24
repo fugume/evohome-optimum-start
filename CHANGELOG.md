@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0
+
+- Record actual temperature error at each controlled schedule switchpoint, including
+  the observation delay caused by Evohome polling.
+- Record the first observed target-reach time as minutes early or late; passively
+  observe cold rooms for up to two hours after the switch without issuing any
+  further heating command.
+- Persist up to 60 outcomes and publish rolling ten-cycle on-time percentage, mean
+  absolute temperature error, warm/cold bias, and mean arrival offset.
+- Add a dynamic dashboard accuracy table and controller regressions for early, late,
+  and timed-out outcomes.
+
 ## 0.4.2
 
 - Replace the static one-room dashboard example with a native, dynamically generated

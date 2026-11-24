@@ -54,6 +54,34 @@ views:
           {% endif %}
 
       - type: markdown
+        title: Prediction accuracy
+        content: |
+          {% set zones = states.sensor
+            | selectattr('attributes.zone_entity', 'defined')
+            | selectattr('attributes.controller_entity', 'defined')
+            | selectattr('attributes.assumed_outdoor_temperature', 'defined')
+            | sort(attribute='name')
+            | list %}
+          Switch error is actual minus target temperature: negative means cold and
+          positive means warm. Arrival is the first observed target-reach time
+          relative to the switchpoint. Rolling values use up to ten cycles.
+
+          {% if zones %}
+          | Zone | Latest outcome | Switch error | Arrival | Observed | On time | Mean error | Bias |
+          |:--|:--|--:|:--|--:|--:|--:|--:|
+          {% for zone in zones -%}
+            {% set a = zone.attributes -%}
+            {% set name = zone.name | replace(' Status', '') -%}
+            {% set arrival = a.latest_arrival_offset_minutes -%}
+            {% set observation = a.accuracy_observation_status or a.latest_observation_status -%}
+            {% set arrival_text = ('%.0f min early' | format(-arrival)) if arrival is number and arrival < -0.5 else ('%.0f min late' | format(arrival)) if arrival is number and arrival > 0.5 else 'on time' if arrival is number else observation | replace('_', ' ') if observation else '—' -%}
+          | {{ name }} | {{ a.latest_accuracy_result | replace('_', ' ') if a.latest_accuracy_result else '—' }} | {{ '%+.2f °C' | format(a.latest_temperature_error_c) if a.latest_temperature_error_c is number else '—' }} | {{ arrival_text }} | {{ '+%.1f min' | format(a.latest_switch_observation_delay_minutes) if a.latest_switch_observation_delay_minutes is number else '—' }} | {{ '%.0f%%' | format(a.on_time_percentage) if a.on_time_percentage is number else '—' }} | {{ '%.2f °C' | format(a.mean_absolute_error_c) if a.mean_absolute_error_c is number else '—' }} | {{ '%+.2f °C' | format(a.temperature_bias_c) if a.temperature_bias_c is number else '—' }} |
+          {% endfor -%}
+          {% else %}
+          No prediction outcomes have been recorded yet.
+          {% endif %}
+
+      - type: markdown
         title: Learning and diagnostics
         content: |
           {% set zones = states.sensor

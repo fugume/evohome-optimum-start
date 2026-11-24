@@ -245,6 +245,195 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
             controller.snapshot["status"], "protected_manual_zone_override"
         )
         self.assertEqual(len(hass.services.calls), 1)
+        self.assertEqual(controller.accuracy_outcomes, [])
+
+    async def test_accuracy_records_early_arrival_and_switch_error(self) -> None:
+        controller, hass = self.make_controller(17.5)
+        await controller.async_evaluate(datetime(2026, 11, 24, 7, 6, tzinfo=UTC))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            20.0,
+            "TemporaryOverride",
+            effective_target=20.0,
+            override_until=self.switch,
+        )
+        await controller.async_evaluate(self.switch - timedelta(minutes=10))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            20.1,
+            "TemporaryOverride",
+            effective_target=20.0,
+            override_until=self.switch,
+        )
+        await controller.async_evaluate(self.switch + timedelta(seconds=30))
+
+        self.assertEqual(len(controller.accuracy_outcomes), 1)
+        outcome = controller.accuracy_outcomes[0]
+        self.assertEqual(outcome["accuracy_result"], "on_time")
+        self.assertAlmostEqual(outcome["temperature_error_c"], 0.1)
+        self.assertEqual(outcome["arrival_offset_minutes"], -10.0)
+        self.assertEqual(outcome["switch_observation_delay_minutes"], 0.5)
+        self.assertEqual(outcome["observation_status"], "complete")
+        self.assertIsNone(controller.accuracy_observation)
+        self.assertEqual(controller.snapshot["on_time_percentage"], 100.0)
+        self.assertAlmostEqual(controller.snapshot["mean_absolute_error_c"], 0.1)
+        self.assertAlmostEqual(controller.snapshot["temperature_bias_c"], 0.1)
+        self.assertEqual(
+            controller.snapshot["latest_switch_observation_delay_minutes"], 0.5
+        )
+
+    async def test_arrival_observation_after_switch_is_not_backdated(self) -> None:
+        controller, hass = self.make_controller(17.5)
+        await controller.async_evaluate(datetime(2026, 11, 24, 7, 6, tzinfo=UTC))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            20.0,
+            "TemporaryOverride",
+            effective_target=20.0,
+            override_until=self.switch,
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=5))
+
+        outcome = controller.accuracy_outcomes[0]
+        self.assertEqual(outcome["arrival_offset_minutes"], 5.0)
+        self.assertEqual(outcome["switch_observation_delay_minutes"], 5.0)
+
+    async def test_late_accuracy_observation_is_passive_and_completes(self) -> None:
+        controller, hass = self.make_controller(17.5)
+        await controller.async_evaluate(datetime(2026, 11, 24, 7, 6, tzinfo=UTC))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.0,
+            "TemporaryOverride",
+            effective_target=20.0,
+            override_until=self.switch,
+        )
+        await controller.async_evaluate(self.switch + timedelta(seconds=30))
+
+        self.assertIsNotNone(controller.accuracy_observation)
+        self.assertEqual(
+            controller.snapshot["accuracy_observation_status"], "observing_late"
+        )
+        self.assertEqual(controller.snapshot["latest_temperature_error_c"], -1.0)
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.5,
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=20.0,
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=5))
+        self.assertIsNotNone(controller.accuracy_observation)
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.8,
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=20.0,
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=20))
+
+        self.assertIsNone(controller.accuracy_observation)
+        outcome = controller.accuracy_outcomes[0]
+        self.assertEqual(outcome["arrival_offset_minutes"], 20.0)
+        self.assertEqual(outcome["observation_status"], "complete")
+        self.assertEqual(controller.snapshot["on_time_percentage"], 0.0)
+        self.assertEqual(controller.snapshot["latest_arrival_offset_minutes"], 20.0)
+        self.assertEqual(len(hass.services.calls), 1)
+
+    async def test_late_accuracy_observation_times_out_without_writing(self) -> None:
+        controller, hass = self.make_controller(17.5)
+        await controller.async_evaluate(datetime(2026, 11, 24, 7, 6, tzinfo=UTC))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.0,
+            "TemporaryOverride",
+            effective_target=20.0,
+            override_until=self.switch,
+        )
+        await controller.async_evaluate(self.switch + timedelta(seconds=30))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.5,
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=20.0,
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=121))
+
+        self.assertIsNone(controller.accuracy_observation)
+        self.assertEqual(
+            controller.accuracy_outcomes[0]["observation_status"], "timed_out"
+        )
+        self.assertEqual(controller.snapshot["latest_observation_status"], "timed_out")
+        self.assertIsNone(
+            controller.accuracy_outcomes[0]["arrival_offset_minutes"]
+        )
+        self.assertEqual(len(hass.services.calls), 1)
+
+    async def test_late_observation_stops_for_manual_override(self) -> None:
+        controller, hass = self.make_controller(17.5)
+        await controller.async_evaluate(datetime(2026, 11, 24, 7, 6, tzinfo=UTC))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.0,
+            "TemporaryOverride",
+            effective_target=20.0,
+            override_until=self.switch,
+        )
+        await controller.async_evaluate(self.switch + timedelta(seconds=30))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.4,
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=20.0,
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=5))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.5,
+            "TemporaryOverride",
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=21.0,
+            override_until=self.switch + timedelta(hours=2),
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=10))
+
+        self.assertIsNone(controller.accuracy_observation)
+        self.assertEqual(
+            controller.accuracy_outcomes[0]["observation_status"],
+            "cancelled_manual_override",
+        )
+        self.assertEqual(len(hass.services.calls), 1)
+
+    def test_accuracy_summary_uses_latest_ten_cycles(self) -> None:
+        controller, _hass = self.make_controller(17.5)
+        controller.accuracy_outcomes = [
+            {
+                "switch_time": f"2026-11-{index + 1:02d}T07:30:00+00:00",
+                "temperature_error_c": -1.0 if index < 2 else 0.1,
+                "arrival_offset_minutes": 30.0 if index < 2 else -5.0,
+                "on_time": index >= 2,
+                "accuracy_result": "cold_at_switch" if index < 2 else "on_time",
+            }
+            for index in range(12)
+        ]
+
+        summary = controller._accuracy_summary()
+
+        self.assertEqual(summary["accuracy_cycle_count"], 12)
+        self.assertEqual(summary["accuracy_window_count"], 10)
+        self.assertEqual(summary["on_time_percentage"], 100.0)
+        self.assertAlmostEqual(summary["mean_absolute_error_c"], 0.1)
+        self.assertAlmostEqual(summary["temperature_bias_c"], 0.1)
+        self.assertEqual(summary["mean_arrival_offset_minutes"], -5.0)
 
     async def test_manual_override_is_never_replaced(self) -> None:
         controller, hass = self.make_controller(17.5)
