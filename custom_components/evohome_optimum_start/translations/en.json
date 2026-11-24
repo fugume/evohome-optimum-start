@@ -12,9 +12,14 @@
       },
       "parameters": {
         "title": "Default zone settings",
-        "description": "These conservative defaults are offered when you add each zone. Each zone can then be tuned independently.",
+        "description": "Zone defaults can be tuned independently. Flow advice is manual and advisory: the initial curve gives 55 °C at 7 °C outdoors, changing by 1 °C for each outdoor degree and staying between 50–65 °C.",
         "data": {
           "assumed_outdoor_temperature": "Assumed outdoor temperature when no entity is selected (°C)",
+          "flow_reference_temperature": "Flow temperature at the reference outdoor temperature (°C)",
+          "flow_reference_outdoor_temperature": "Reference outdoor temperature (°C)",
+          "flow_curve_slope": "Flow increase per degree colder outdoors (°C/°C)",
+          "minimum_flow_temperature": "Minimum suggested flow temperature (°C)",
+          "maximum_flow_temperature": "Maximum suggested flow temperature (°C)",
           "initial_heating_rate": "Initial heating rate (°C/hour)",
           "maximum_lead_minutes": "Maximum lead (minutes)",
           "warmup_delay_minutes": "Radiator warm-up delay (minutes)",
@@ -27,7 +32,8 @@
     "error": {
       "not_evohome_controller": "Select the Evohome system/controller climate entity. It must expose status.system_mode_status.",
       "outdoor_unavailable": "The outdoor temperature or weather entity is unavailable or has no numeric current temperature.",
-      "evohome_service_missing": "The official Evohome integration is not loaded or its set_zone_override action is unavailable."
+      "evohome_service_missing": "The official Evohome integration is not loaded or its set_zone_override action is unavailable.",
+      "flow_maximum_not_above_minimum": "Maximum flow temperature must be greater than the minimum."
     },
     "abort": {
       "already_configured": "This Evohome system already has an Optimum Start entry. Add another zone to the existing entry."
@@ -37,10 +43,15 @@
     "step": {
       "init": {
         "title": "System settings",
-        "description": "Weather and assumed outdoor temperature apply to every zone. Prediction values are defaults for zones added later; reconfigure an existing zone to tune it.",
+        "description": "Weather and flow-advice settings apply to the system. Prediction values are defaults for zones added later. Update the curve anchor if you deliberately establish a different working flow temperature.",
         "data": {
           "outdoor_temperature_entity": "Outdoor temperature sensor or weather entity (optional)",
           "assumed_outdoor_temperature": "Assumed outdoor temperature when no entity is selected (°C)",
+          "flow_reference_temperature": "Flow temperature at the reference outdoor temperature (°C)",
+          "flow_reference_outdoor_temperature": "Reference outdoor temperature (°C)",
+          "flow_curve_slope": "Flow increase per degree colder outdoors (°C/°C)",
+          "minimum_flow_temperature": "Minimum suggested flow temperature (°C)",
+          "maximum_flow_temperature": "Maximum suggested flow temperature (°C)",
           "initial_heating_rate": "Default initial heating rate (°C/hour)",
           "maximum_lead_minutes": "Default maximum lead (minutes)",
           "warmup_delay_minutes": "Default radiator warm-up delay (minutes)",
@@ -53,7 +64,8 @@
     "error": {
       "not_evohome_controller": "The configured Evohome system controller is unavailable.",
       "outdoor_unavailable": "The outdoor temperature or weather entity is unavailable or has no numeric current temperature.",
-      "evohome_service_missing": "The official Evohome integration is not loaded or its set_zone_override action is unavailable."
+      "evohome_service_missing": "The official Evohome integration is not loaded or its set_zone_override action is unavailable.",
+      "flow_maximum_not_above_minimum": "Maximum flow temperature must be greater than the minimum."
     }
   },
   "config_subentries": {

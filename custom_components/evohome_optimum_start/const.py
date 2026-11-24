@@ -20,6 +20,11 @@ CONF_SAFETY_MARGIN: Final = "safety_margin_minutes"
 CONF_TARGET_TOLERANCE: Final = "target_tolerance"
 CONF_MINIMUM_RISE: Final = "minimum_learning_rise"
 CONF_STORAGE_ID: Final = "storage_id"
+CONF_FLOW_REFERENCE_TEMP: Final = "flow_reference_temperature"
+CONF_FLOW_REFERENCE_OUTDOOR: Final = "flow_reference_outdoor_temperature"
+CONF_FLOW_CURVE_SLOPE: Final = "flow_curve_slope"
+CONF_FLOW_MINIMUM: Final = "minimum_flow_temperature"
+CONF_FLOW_MAXIMUM: Final = "maximum_flow_temperature"
 
 DEFAULT_INITIAL_RATE: Final = 0.7
 DEFAULT_ASSUMED_OUTDOOR: Final = 7.0
@@ -28,6 +33,11 @@ DEFAULT_WARMUP_DELAY: Final = 10
 DEFAULT_SAFETY_MARGIN: Final = 10
 DEFAULT_TARGET_TOLERANCE: Final = 0.2
 DEFAULT_MINIMUM_RISE: Final = 0.3
+DEFAULT_FLOW_REFERENCE_TEMP: Final = 55.0
+DEFAULT_FLOW_REFERENCE_OUTDOOR: Final = 7.0
+DEFAULT_FLOW_CURVE_SLOPE: Final = 1.0
+DEFAULT_FLOW_MINIMUM: Final = 50.0
+DEFAULT_FLOW_MAXIMUM: Final = 65.0
 
 SAFE_SYSTEM_MODES: Final = frozenset(("Auto", "AutoWithReset"))
 FOLLOW_SCHEDULE: Final = "FollowSchedule"

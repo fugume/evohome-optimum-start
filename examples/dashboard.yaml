@@ -82,6 +82,30 @@ views:
           {% endif %}
 
       - type: markdown
+        title: Manual boiler flow suggestion
+        content: |
+          {% set advisors = states.sensor
+            | selectattr('attributes.advisory_only', 'defined')
+            | selectattr('attributes.weather_curve_temperature_c', 'defined')
+            | list %}
+          {% if advisors %}
+          {% set flow = advisors | first %}
+          {% set a = flow.attributes %}
+          **Set the central-heating flow control to approximately {{ flow.state }} °C**<br>
+          Outdoor temperature: {{ '%.1f °C' | format(a.outdoor_temperature) }}<br>
+          Weather-curve value: {{ '%.1f °C' | format(a.weather_curve_temperature_c) }}<br>
+          Evidence adjustment: {{ '%+.0f °C' | format(a.evidence_adjustment_c) }}<br>
+          Confidence: {{ a.confidence }} — {{ a.reason | replace('_', ' ') }}
+
+          This is advisory only. It does not control the boiler. Do not
+          apply a low central-heating setting to a shared cylinder circuit unless
+          the boiler/manual confirms domestic hot-water safety is independently
+          protected.
+          {% else %}
+          The system flow-temperature advisor is not available yet.
+          {% endif %}
+
+      - type: markdown
         title: Learning and diagnostics
         content: |
           {% set zones = states.sensor
@@ -100,6 +124,30 @@ views:
           {% endfor -%}
           {% else %}
           No learning diagnostics are available.
+          {% endif %}
+
+      - type: markdown
+        title: Terminal approach diagnostics
+        content: |
+          {% set zones = states.sensor
+            | selectattr('attributes.zone_entity', 'defined')
+            | selectattr('attributes.controller_entity', 'defined')
+            | selectattr('attributes.assumed_outdoor_temperature', 'defined')
+            | sort(attribute='name')
+            | list %}
+          A long final half-degree can suggest limited radiator output, but it may
+          also be normal Evohome valve throttling. System advice is raised only when
+          at least two independent zones are both cold and show a capacity-limited
+          terminal approach.
+
+          {% if zones %}
+          | Zone | Assessment | Final 0.5 °C | Slowdown | Overshoot |
+          |:--|:--|--:|--:|--:|
+          {% for zone in zones -%}
+            {% set a = zone.attributes -%}
+            {% set name = zone.name | replace(' Status', '') -%}
+          | {{ name }} | {{ a.latest_terminal_assessment | replace('_', ' ') if a.latest_terminal_assessment else '—' }} | {{ '%.0f min' | format(a.latest_terminal_dwell_minutes) if a.latest_terminal_dwell_minutes is number else '—' }} | {{ '%.2f×' | format(a.latest_terminal_slowdown_ratio) if a.latest_terminal_slowdown_ratio is number else '—' }} | {{ '%.2f °C' | format(a.latest_overshoot_c) if a.latest_overshoot_c is number else '—' }} |
+          {% endfor -%}
           {% endif %}
 
       - type: markdown

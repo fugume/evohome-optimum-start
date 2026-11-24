@@ -89,9 +89,7 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
                     "setpoints": {
                         "this_sp_temp": this_target,
                         "next_sp_temp": next_target,
-                        "next_sp_from": (
-                            next_switch or self.switch
-                        ).isoformat(),
+                        "next_sp_from": (next_switch or self.switch).isoformat(),
                     },
                     "setpoint_status": setpoint_status,
                     "temperature_status": {"temperature": current},
@@ -273,8 +271,8 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(outcome["temperature_error_c"], 0.1)
         self.assertEqual(outcome["arrival_offset_minutes"], -10.0)
         self.assertEqual(outcome["switch_observation_delay_minutes"], 0.5)
-        self.assertEqual(outcome["observation_status"], "complete")
-        self.assertIsNone(controller.accuracy_observation)
+        self.assertEqual(outcome["observation_status"], "observing_overshoot")
+        self.assertIsNotNone(controller.accuracy_observation)
         self.assertEqual(controller.snapshot["on_time_percentage"], 100.0)
         self.assertAlmostEqual(controller.snapshot["mean_absolute_error_c"], 0.1)
         self.assertAlmostEqual(controller.snapshot["temperature_bias_c"], 0.1)
@@ -335,6 +333,16 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
         )
         await controller.async_evaluate(self.switch + timedelta(minutes=20))
 
+        self.assertIsNotNone(controller.accuracy_observation)
+        hass.states._states["climate.living_room"] = self.zone_state(
+            20.1,
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=20.0,
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=31))
+
         self.assertIsNone(controller.accuracy_observation)
         outcome = controller.accuracy_outcomes[0]
         self.assertEqual(outcome["arrival_offset_minutes"], 20.0)
@@ -369,9 +377,7 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
             controller.accuracy_outcomes[0]["observation_status"], "timed_out"
         )
         self.assertEqual(controller.snapshot["latest_observation_status"], "timed_out")
-        self.assertIsNone(
-            controller.accuracy_outcomes[0]["arrival_offset_minutes"]
-        )
+        self.assertIsNone(controller.accuracy_outcomes[0]["arrival_offset_minutes"])
         self.assertEqual(len(hass.services.calls), 1)
 
     async def test_late_observation_stops_for_manual_override(self) -> None:

@@ -53,6 +53,7 @@ from .const import (
     TEMPORARY_OVERRIDE,
 )
 from .decision import DecisionInput, decide
+from .flow_temperature import analyse_terminal_approach
 from .learning import HeatingModel, HeatingSample
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ _LOGGER = logging.getLogger(__name__)
 _SCHEDULE_SYNC_TIMEOUT = timedelta(minutes=15)
 _SCHEDULE_SYNC_RESET_RETRY = timedelta(minutes=2)
 _ACCURACY_OBSERVATION_TIMEOUT = timedelta(hours=2)
+_OVERSHOOT_OBSERVATION_TIMEOUT = timedelta(minutes=30)
 _ACCURACY_WINDOW = 10
 _MAX_ACCURACY_OUTCOMES = 60
 
@@ -152,6 +154,10 @@ class ZoneController:
             "latest_accuracy_result": None,
             "latest_observation_status": None,
             "accuracy_observation_status": None,
+            "latest_terminal_assessment": None,
+            "latest_terminal_slowdown_ratio": None,
+            "latest_terminal_dwell_minutes": None,
+            "latest_overshoot_c": None,
         }
         self._last_evaluated: datetime | None = None
         self._listeners: list[Callable[[], None]] = []
@@ -492,6 +498,33 @@ class ZoneController:
         self.accuracy_outcomes.append(outcome)
         del self.accuracy_outcomes[:-_MAX_ACCURACY_OUTCOMES]
 
+    @staticmethod
+    def _append_trace_point(
+        container: dict[str, Any], *, now: datetime, current_c: float
+    ) -> None:
+        """Add a bounded temperature point, respecting Evohome's coarse polling."""
+        trace = container.setdefault("temperature_trace", [])
+        if not isinstance(trace, list):
+            trace = []
+            container["temperature_trace"] = trace
+        if trace:
+            latest = trace[-1]
+            latest_at = _parse_datetime(
+                latest.get("at") if isinstance(latest, Mapping) else None
+            )
+            latest_c = _as_float(
+                latest.get("temperature_c") if isinstance(latest, Mapping) else None
+            )
+            if (
+                latest_at is not None
+                and latest_c is not None
+                and abs(latest_c - current_c) < 0.01
+                and now - latest_at < timedelta(minutes=5)
+            ):
+                return
+        trace.append({"at": now.isoformat(), "temperature_c": current_c})
+        del trace[:-240]
+
     def _accuracy_summary(self) -> dict[str, Any]:
         """Return rolling accuracy diagnostics for the status entity."""
         recent = self.accuracy_outcomes[-_ACCURACY_WINDOW:]
@@ -503,8 +536,7 @@ class ZoneController:
         arrivals = [
             offset
             for outcome in recent
-            if (offset := _as_float(outcome.get("arrival_offset_minutes")))
-            is not None
+            if (offset := _as_float(outcome.get("arrival_offset_minutes"))) is not None
         ]
         on_time = [
             bool(outcome["on_time"])
@@ -529,9 +561,7 @@ class ZoneController:
             "mean_arrival_offset_minutes": (
                 round(sum(arrivals) / len(arrivals), 1) if arrivals else None
             ),
-            "latest_temperature_error_c": _as_float(
-                latest.get("temperature_error_c")
-            ),
+            "latest_temperature_error_c": _as_float(latest.get("temperature_error_c")),
             "latest_arrival_offset_minutes": _as_float(
                 latest.get("arrival_offset_minutes")
             ),
@@ -545,6 +575,14 @@ class ZoneController:
                 if self.accuracy_observation
                 else None
             ),
+            "latest_terminal_assessment": latest.get("terminal_assessment"),
+            "latest_terminal_slowdown_ratio": _as_float(
+                latest.get("terminal_slowdown_ratio")
+            ),
+            "latest_terminal_dwell_minutes": _as_float(
+                latest.get("minutes_within_0_5_c_below_target")
+            ),
+            "latest_overshoot_c": _as_float(latest.get("overshoot_c")),
         }
 
     async def _capture_switch_accuracy(
@@ -558,6 +596,8 @@ class ZoneController:
         target_c = _as_float(self.active.get("target_c"))
         if switch_time is None or started is None or target_c is None:
             return
+
+        self._append_trace_point(self.active, now=now, current_c=current_c)
 
         reached_at = _parse_datetime(self.active.get("target_reached_at"))
         if reached_at is None and current_c >= target_c - self.target_tolerance:
@@ -587,6 +627,7 @@ class ZoneController:
                 self.active.get("predicted_lead_minutes")
             ),
             "target_c": target_c,
+            "outdoor_temperature_c": _as_float(self.active.get("outdoor_c")),
             "temperature_at_switch": current_c,
             "temperature_error_c": round(temperature_error, 3),
             "switch_observed_at": now.isoformat(),
@@ -601,8 +642,17 @@ class ZoneController:
             ),
             "on_time": on_time,
             "accuracy_result": accuracy_result,
-            "observation_status": "complete" if reached_at else "observing_late",
+            "observation_status": (
+                "observing_overshoot" if reached_at else "observing_late"
+            ),
         }
+        outcome.update(
+            analyse_terminal_approach(
+                self.active.get("temperature_trace", []),
+                target_c=target_c,
+                tolerance_c=self.target_tolerance,
+            )
+        )
         self._upsert_accuracy_outcome(outcome)
         self.last_cycle = {
             **(self.last_cycle or {}),
@@ -617,15 +667,20 @@ class ZoneController:
                 "switch_observation_delay_minutes"
             ],
         }
-        if reached_at is None:
-            self.accuracy_observation = {
-                "switch_time": switch_time.isoformat(),
-                "target_c": target_c,
-                "deadline": (
-                    switch_time + _ACCURACY_OBSERVATION_TIMEOUT
-                ).isoformat(),
-                "status": "observing_late",
-            }
+        self.accuracy_observation = {
+            "switch_time": switch_time.isoformat(),
+            "target_c": target_c,
+            "deadline": (
+                switch_time
+                + (
+                    _OVERSHOOT_OBSERVATION_TIMEOUT
+                    if reached_at
+                    else _ACCURACY_OBSERVATION_TIMEOUT
+                )
+            ).isoformat(),
+            "status": "observing_overshoot" if reached_at else "observing_late",
+            "temperature_trace": list(self.active.get("temperature_trace", [])),
+        }
         self.active["accuracy_captured"] = True
         await self._save()
 
@@ -656,14 +711,24 @@ class ZoneController:
                     (now - switch_time).total_seconds() / 60.0, 1
                 ),
             }
+        target_c = _as_float(self.accuracy_observation.get("target_c"))
+        if target_c is not None:
+            updates.update(
+                analyse_terminal_approach(
+                    self.accuracy_observation.get("temperature_trace", []),
+                    target_c=target_c,
+                    tolerance_c=self.target_tolerance,
+                )
+            )
         for index in range(len(self.accuracy_outcomes) - 1, -1, -1):
             outcome = self.accuracy_outcomes[index]
             if outcome.get("switch_time") == switch_time.isoformat():
                 self.accuracy_outcomes[index] = {**outcome, **updates}
                 break
-        if self.last_cycle and self.last_cycle.get(
-            "accuracy_switch_time"
-        ) == switch_time.isoformat():
+        if (
+            self.last_cycle
+            and self.last_cycle.get("accuracy_switch_time") == switch_time.isoformat()
+        ):
             self.last_cycle = {
                 **self.last_cycle,
                 "accuracy_observation_status": status,
@@ -672,6 +737,12 @@ class ZoneController:
                     if reached_target
                     else {}
                 ),
+                "terminal_assessment": updates.get("terminal_assessment"),
+                "terminal_slowdown_ratio": updates.get("terminal_slowdown_ratio"),
+                "minutes_within_0_5_c_below_target": updates.get(
+                    "minutes_within_0_5_c_below_target"
+                ),
+                "overshoot_c": updates.get("overshoot_c"),
             }
         self.accuracy_observation = None
         await self._save()
@@ -692,6 +763,9 @@ class ZoneController:
             self.accuracy_observation = None
             await self._save()
             return
+        self._append_trace_point(
+            self.accuracy_observation, now=now, current_c=zone["current"]
+        )
         if not self.enabled:
             await self._finish_accuracy_observation(
                 now=now, status="cancelled_disabled"
@@ -708,12 +782,51 @@ class ZoneController:
             await self._finish_accuracy_observation(
                 now=now, status="cancelled_schedule_changed"
             )
-        elif zone["current"] >= target_c - self.target_tolerance:
-            await self._finish_accuracy_observation(
-                now=now, status="complete", reached_target=True
-            )
+        elif self.accuracy_observation.get("status") == "observing_late":
+            if zone["current"] >= target_c - self.target_tolerance:
+                switch_time = _parse_datetime(
+                    self.accuracy_observation.get("switch_time")
+                )
+                if switch_time is None:
+                    await self._finish_accuracy_observation(
+                        now=now, status="complete", reached_target=True
+                    )
+                    return
+                for index in range(len(self.accuracy_outcomes) - 1, -1, -1):
+                    outcome = self.accuracy_outcomes[index]
+                    if outcome.get("switch_time") == switch_time.isoformat():
+                        self.accuracy_outcomes[index] = {
+                            **outcome,
+                            "target_reached_at": now.isoformat(),
+                            "arrival_offset_minutes": round(
+                                (now - switch_time).total_seconds() / 60.0, 1
+                            ),
+                            "observation_status": "observing_overshoot",
+                        }
+                        break
+                self.accuracy_observation["status"] = "observing_overshoot"
+                self.accuracy_observation["deadline"] = (
+                    switch_time + _OVERSHOOT_OBSERVATION_TIMEOUT
+                ).isoformat()
+                if (
+                    self.last_cycle
+                    and self.last_cycle.get("accuracy_switch_time")
+                    == switch_time.isoformat()
+                ):
+                    self.last_cycle = {
+                        **self.last_cycle,
+                        "arrival_offset_minutes": round(
+                            (now - switch_time).total_seconds() / 60.0, 1
+                        ),
+                        "accuracy_observation_status": "observing_overshoot",
+                    }
+                await self._save()
+                if now >= switch_time + _OVERSHOOT_OBSERVATION_TIMEOUT:
+                    await self._finish_accuracy_observation(now=now, status="complete")
+            elif now >= deadline:
+                await self._finish_accuracy_observation(now=now, status="timed_out")
         elif now >= deadline:
-            await self._finish_accuracy_observation(now=now, status="timed_out")
+            await self._finish_accuracy_observation(now=now, status="complete")
 
     async def _reset_expired_owned_override(self, now: datetime) -> None:
         """Reset a positively identified override that survived its switchpoint."""
@@ -776,6 +889,8 @@ class ZoneController:
             await self._cancel_owned_override(f"system_mode_{system_mode}")
             await self._save()
             return self.active is not None
+
+        self._append_trace_point(self.active, now=now, current_c=zone["current"])
 
         if now >= switch_time:
             if zone["mode"] == PERMANENT_OVERRIDE or (
@@ -1096,6 +1211,9 @@ class ZoneController:
                 "predicted_lead_minutes": lead,
                 "lead_capped": capped,
                 "sample_recorded": False,
+                "temperature_trace": [
+                    {"at": now.isoformat(), "temperature_c": zone["current"]}
+                ],
             }
             await self._save()
             try:

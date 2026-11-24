@@ -10,13 +10,16 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import EntityCategory, UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import EvohomeOptimumStartConfigEntry
+from .const import DOMAIN
 from .controller import ZoneController
 from .entity import OptimumStartEntity
+from .system import SystemController
 
 
 async def async_setup_entry(
@@ -25,6 +28,7 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up diagnostic sensors."""
+    async_add_entities([SuggestedFlowTemperatureSensor(entry.runtime_data)])
     for subentry_id, controller in entry.runtime_data.zones.items():
         async_add_entities(
             [
@@ -68,6 +72,51 @@ async def async_setup_entry(
             ],
             config_subentry_id=subentry_id,
         )
+
+
+class SuggestedFlowTemperatureSensor(SensorEntity):
+    """Advisory manual boiler flow-temperature setting for the system."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_name = "Suggested flow temperature"
+    _attr_icon = "mdi:water-thermometer"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, controller: SystemController) -> None:
+        self.controller = controller
+        self._attr_unique_id = f"{controller.entry.entry_id}_suggested_flow_temperature"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{controller.entry.entry_id}_system")},
+            name=controller.entry.title,
+            manufacturer="Evohome Optimum Start",
+            model="Heating system advisor",
+            configuration_url="https://www.home-assistant.io/integrations/evohome/",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            self.controller.async_add_listener(self.async_write_ha_state)
+        )
+
+    @property
+    def available(self) -> bool:
+        return bool(self.controller.snapshot.get("available", False))
+
+    @property
+    def native_value(self) -> float | None:
+        value = self.controller.snapshot.get("suggested_flow_temperature_c")
+        return float(value) if isinstance(value, (float, int)) else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in self.controller.snapshot.items()
+            if key not in {"available", "suggested_flow_temperature_c"}
+        }
 
 
 class StatusSensor(OptimumStartEntity, SensorEntity):

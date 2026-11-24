@@ -122,6 +122,49 @@ mean arrival offset. Evohome and room-temperature polling limit timing precision
 each outcome also records how late the switchpoint observation itself occurred.
 Resetting learning clears both heating samples and accuracy history.
 
+### Terminal approach and manual flow-temperature advice
+
+During an owned preheat, the integration retains a bounded trace of the public room
+temperature. It continues passive observation until 30 minutes after the switchpoint
+(or up to two hours while a room is still cold) and reports:
+
+- time spent in the final 0.5 °C below target;
+- the terminal heating rate relative to the earlier part of the rise;
+- maximum observed overshoot; and
+- whether the result looks normal/controlled, inconclusive, or like a possible
+  capacity limit.
+
+Room temperature alone cannot prove that boiler flow temperature is too low: Evohome
+may simply be closing a TRV near target. The system therefore raises its curve for
+learned evidence only when at least two different zones are cold at the switchpoint,
+show the capacity-limit signature, and were observed within 3 °C of the current
+outdoor temperature.
+
+The system device has one **Suggested flow temperature** diagnostic sensor. Its
+initial, deliberately simple weather curve is:
+
+`55 °C + 1 × (7 °C − current outdoor temperature)`
+
+and is bounded to 50–65 °C. Thus it suggests 50 °C at 12 °C outdoors, 55 °C at
+7 °C, and 60 °C at 2 °C. These anchor, slope, minimum, and maximum values are all
+editable under **Configure**. Learned multi-zone evidence can add 2 °C, but a warm
+outcome never lowers the curve automatically because an early optimum start can
+produce the same symptom.
+
+This sensor is advisory only: it never writes to the boiler. It is an approximation,
+not a substitute for Worcester's compatible weather-compensation control or a system
+design calculation. If one boiler temperature control also heats a domestic-hot-water
+cylinder, do not use a recommendation below the safe value required by the boiler,
+cylinder, and installer; set the configured minimum accordingly. Energy Saving Trust
+specifically cautions against reducing a shared conventional-boiler control below
+65 °C. Combi boilers with independently controlled hot water do not have that same
+shared-cylinder constraint.
+
+References:
+
+- [Worcester weather-compensation technical bulletin](https://installer.worcester-bosch.co.uk/support/literature/download/TB0113)
+- [Energy Saving Trust flow-temperature guidance](https://energysavingtrust.org.uk/should-i-turn-boilers-flow-temperature-down)
+
 ## Installation
 
 Version 0.3.0 and later require Home Assistant 2026.11 or newer because they use Home
@@ -186,6 +229,16 @@ Keep the initial defaults:
 | Safety margin | 10 min | Early-model uncertainty allowance |
 | Target tolerance | 0.2 °C | Counts target as reached |
 | Minimum learning rise | 0.3 °C | Rejects noisy/tiny samples |
+
+The system also offers these initial manual flow-advice settings:
+
+| Setting | Initial value | Meaning |
+|---|---:|---|
+| Flow at reference outdoor temperature | 55 °C | Anchor for the line |
+| Reference outdoor temperature | 7 °C | Outdoor point for that anchor |
+| Curve slope | 1.0 °C/°C | Add 1 °C flow per degree colder |
+| Minimum suggested flow | 50 °C | Mild-weather lower bound |
+| Maximum suggested flow | 65 °C | Cold-weather upper bound |
 
 After the system is created, Home Assistant immediately opens **Discover zones**.
 The integration finds available heating zones from the selected controller's
@@ -308,7 +361,9 @@ To install it as a separate dashboard:
 The overview shows configured/enabled counts and active preheats. The other tables
 show each zone's current and scheduled temperatures, next switch, predicted start,
 prediction accuracy, lead, learned rate, sample count, outdoor temperature, last
-cycle, and latest evaluation. Enable switches remain on the individual zone devices
+cycle, latest evaluation, terminal approach, and overshoot. A system card shows the
+manual flow-temperature suggestion, evidence adjustment, confidence, and reason.
+Enable switches remain on the individual zone devices
 by design. A commented native entity-card example at the end of the file can be
 copied into the view if direct controls are wanted for a particular room.
 
@@ -319,9 +374,13 @@ schedules enabled.
 
 ## Tuning guidance for the described Worcester/Evohome system
 
-- Keep the model at the normal ~55 °C flow temperature while it learns.
+- Begin with the known ~55 °C setting near 7 °C outdoors and treat the flow sensor as
+  a trial recommendation. Change the boiler manually only after checking that its CH
+  control is independent from any stored-hot-water safety requirement.
 - Leave Advanced Load Scaling as-is initially. If you later enable it or substantially
-  change flow temperature/weather compensation, reset learning in every zone.
+  change the configured weather curve or heating hardware, reset learning in every
+  zone. Do not reset for ordinary day-to-day changes made by following the same curve;
+  the outdoor-rate model should learn that combined system behaviour.
 - Do not reduce the three-hour cap until diagnostics show ordinary calculated leads
   stay well below it on cold days.
 - If rooms consistently arrive late after 10–15 accepted samples, increase safety

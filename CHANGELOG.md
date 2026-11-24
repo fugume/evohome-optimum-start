@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0
+
+- Record a bounded temperature trace during owned preheats and passive follow-up,
+  then publish final-half-degree dwell, mid/terminal heating-rate ratio, terminal
+  assessment, and 30-minute overshoot for each zone.
+- Add one system-level `Suggested flow temperature` diagnostic sensor implementing
+  a configurable, bounded linear weather curve. The initial 55 °C at 7 °C outdoor
+  curve changes by 1 °C per outdoor degree and is bounded to 50–65 °C.
+- Keep the suggestion advisory-only and expose its curve value, evidence adjustment,
+  confidence, reason, outdoor temperature, and configuration as attributes.
+- Raise the weather-curve recommendation by only 2 °C, and only when at least two
+  independent zones have recent, comparable-weather cold outcomes with a terminal
+  capacity-limit signature. Never lower it from warm outcomes automatically.
+- Extend the dynamic dashboard with the manual flow suggestion and per-zone terminal
+  approach diagnostics.
+
 ## 0.5.0
 
 - Record actual temperature error at each controlled schedule switchpoint, including

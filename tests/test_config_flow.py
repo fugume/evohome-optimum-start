@@ -80,11 +80,11 @@ class ZoneDiscoveryTests(unittest.TestCase):
             }
         )
         registry = SimpleNamespace(
-            async_get=lambda entity_id: SimpleNamespace(
-                config_entry_id="official-evohome-entry"
+            async_get=lambda entity_id: (
+                SimpleNamespace(config_entry_id="official-evohome-entry")
+                if entity_id == "climate.home"
+                else None
             )
-            if entity_id == "climate.home"
-            else None
         )
         entries = [
             SimpleNamespace(
@@ -132,9 +132,7 @@ class ZoneDiscoveryTests(unittest.TestCase):
             )
 
         self.assertEqual(discovered, ["climate.bedroom", "climate.kitchen"])
-        entries_for_config.assert_called_once_with(
-            registry, "official-evohome-entry"
-        )
+        entries_for_config.assert_called_once_with(registry, "official-evohome-entry")
 
     def test_bulk_zones_receive_concrete_parent_defaults(self) -> None:
         defaults = _zone_defaults({"maximum_lead_minutes": 120})
@@ -170,9 +168,11 @@ class ZoneDiscoveryTests(unittest.TestCase):
             ),
         ]
         registry = SimpleNamespace(
-            async_get=lambda entity_id: SimpleNamespace(config_entry_id=None)
-            if entity_id == "climate.home"
-            else None,
+            async_get=lambda entity_id: (
+                SimpleNamespace(config_entry_id=None)
+                if entity_id == "climate.home"
+                else None
+            ),
             entities=SimpleNamespace(values=lambda: entries),
         )
 

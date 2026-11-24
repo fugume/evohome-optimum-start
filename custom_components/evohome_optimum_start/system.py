@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -17,11 +17,22 @@ from homeassistant.helpers.event import (
 
 from .const import (
     CONF_CONTROLLER_ENTITY,
+    CONF_FLOW_CURVE_SLOPE,
+    CONF_FLOW_MAXIMUM,
+    CONF_FLOW_MINIMUM,
+    CONF_FLOW_REFERENCE_OUTDOOR,
+    CONF_FLOW_REFERENCE_TEMP,
     CONF_OUTDOOR_ENTITY,
     CONF_STORAGE_ID,
+    DEFAULT_FLOW_CURVE_SLOPE,
+    DEFAULT_FLOW_MAXIMUM,
+    DEFAULT_FLOW_MINIMUM,
+    DEFAULT_FLOW_REFERENCE_OUTDOOR,
+    DEFAULT_FLOW_REFERENCE_TEMP,
     SUBENTRY_TYPE_ZONE,
 )
 from .controller import ZoneController
+from .flow_temperature import recommend_flow_temperature
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,9 +45,33 @@ class SystemController:
         self.entry = entry
         self.zones: dict[str, ZoneController] = {}
         self._listeners: list[Callable[[], None]] = []
+        self._entity_listeners: list[Callable[[], None]] = []
         self._lock = asyncio.Lock()
 
         parent_config = {**entry.data, **entry.options}
+        self.snapshot: dict[str, object] = {
+            "available": False,
+            "suggested_flow_temperature_c": None,
+            "confidence": "low",
+            "reason": "waiting_for_zone_data",
+        }
+        self.reference_flow_c = float(
+            parent_config.get(CONF_FLOW_REFERENCE_TEMP, DEFAULT_FLOW_REFERENCE_TEMP)
+        )
+        self.reference_outdoor_c = float(
+            parent_config.get(
+                CONF_FLOW_REFERENCE_OUTDOOR, DEFAULT_FLOW_REFERENCE_OUTDOOR
+            )
+        )
+        self.curve_slope = float(
+            parent_config.get(CONF_FLOW_CURVE_SLOPE, DEFAULT_FLOW_CURVE_SLOPE)
+        )
+        self.minimum_flow_c = float(
+            parent_config.get(CONF_FLOW_MINIMUM, DEFAULT_FLOW_MINIMUM)
+        )
+        self.maximum_flow_c = float(
+            parent_config.get(CONF_FLOW_MAXIMUM, DEFAULT_FLOW_MAXIMUM)
+        )
         for subentry in entry.get_subentries_of_type(SUBENTRY_TYPE_ZONE):
             config = {**parent_config, **subentry.data}
             storage_id = str(subentry.data.get(CONF_STORAGE_ID) or subentry.subentry_id)
@@ -89,6 +124,73 @@ class SystemController:
         for zone in self.zones.values():
             await zone.async_stop()
 
+    @callback
+    def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Listen for system diagnostic changes."""
+        self._entity_listeners.append(listener)
+
+        @callback
+        def remove() -> None:
+            if listener in self._entity_listeners:
+                self._entity_listeners.remove(listener)
+
+        return remove
+
+    @callback
+    def _publish(self) -> None:
+        for listener in tuple(self._entity_listeners):
+            listener()
+
+    def _update_flow_advice(self, evaluated_at: datetime) -> None:
+        """Build one system recommendation from weather and zone outcomes."""
+        outdoor_values = [
+            value
+            for zone in self.zones.values()
+            if zone.snapshot.get("available") is True
+            and isinstance(
+                value := zone.snapshot.get("outdoor_temperature"), (float, int)
+            )
+        ]
+        if not outdoor_values:
+            self.snapshot = {
+                **self.snapshot,
+                "available": False,
+                "last_evaluated": evaluated_at,
+                "reason": "waiting_for_zone_data",
+            }
+            self._publish()
+            return
+
+        outcomes: list[dict[str, object]] = []
+        for zone_id, zone in self.zones.items():
+            outcomes.extend(
+                {**outcome, "zone_id": zone_id, "zone_name": zone.title}
+                for outcome in zone.accuracy_outcomes[-10:]
+            )
+        outdoor_c = sum(float(value) for value in outdoor_values) / len(outdoor_values)
+        advice = recommend_flow_temperature(
+            outdoor_c=outdoor_c,
+            reference_flow_c=self.reference_flow_c,
+            reference_outdoor_c=self.reference_outdoor_c,
+            curve_slope=self.curve_slope,
+            minimum_flow_c=self.minimum_flow_c,
+            maximum_flow_c=self.maximum_flow_c,
+            outcomes=outcomes,
+        )
+        self.snapshot = {
+            **advice,
+            "available": True,
+            "outdoor_temperature": round(outdoor_c, 1),
+            "last_evaluated": evaluated_at,
+            "reference_flow_temperature": self.reference_flow_c,
+            "reference_outdoor_temperature": self.reference_outdoor_c,
+            "curve_slope": self.curve_slope,
+            "minimum_flow_temperature": self.minimum_flow_c,
+            "maximum_flow_temperature": self.maximum_flow_c,
+            "advisory_only": True,
+        }
+        self._publish()
+
     async def _state_changed(self, event: Event) -> None:
         """Evaluate all zones after any shared input changes."""
         await self.async_evaluate_all()
@@ -115,3 +217,4 @@ class SystemController:
                         "Could not evaluate optimum start for %s", zone.title
                     )
                     zone.set_evaluation_error(evaluated_at, err)
+            self._update_flow_advice(evaluated_at)

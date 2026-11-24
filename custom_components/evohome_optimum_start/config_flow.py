@@ -36,6 +36,11 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ASSUMED_OUTDOOR,
     CONF_CONTROLLER_ENTITY,
+    CONF_FLOW_CURVE_SLOPE,
+    CONF_FLOW_MAXIMUM,
+    CONF_FLOW_MINIMUM,
+    CONF_FLOW_REFERENCE_OUTDOOR,
+    CONF_FLOW_REFERENCE_TEMP,
     CONF_INITIAL_RATE,
     CONF_MAX_LEAD,
     CONF_MINIMUM_RISE,
@@ -47,6 +52,11 @@ from .const import (
     CONF_ZONE_ENTITIES,
     CONF_ZONE_ENTITY,
     DEFAULT_ASSUMED_OUTDOOR,
+    DEFAULT_FLOW_CURVE_SLOPE,
+    DEFAULT_FLOW_MAXIMUM,
+    DEFAULT_FLOW_MINIMUM,
+    DEFAULT_FLOW_REFERENCE_OUTDOOR,
+    DEFAULT_FLOW_REFERENCE_TEMP,
     DEFAULT_INITIAL_RATE,
     DEFAULT_MAX_LEAD,
     DEFAULT_MINIMUM_RISE,
@@ -125,12 +135,34 @@ def settings_schema(values: Mapping[str, Any]) -> probatio.Schema:
 
 
 def system_parameters_schema(values: Mapping[str, Any]) -> probatio.Schema:
-    """Return assumed weather plus new-zone defaults."""
+    """Return assumed weather, flow advice, and new-zone defaults."""
     fields = {
         probatio.Required(
             CONF_ASSUMED_OUTDOOR,
             default=values.get(CONF_ASSUMED_OUTDOOR, DEFAULT_ASSUMED_OUTDOOR),
         ): _number(-20, 30, 0.5),
+        probatio.Required(
+            CONF_FLOW_REFERENCE_TEMP,
+            default=values.get(CONF_FLOW_REFERENCE_TEMP, DEFAULT_FLOW_REFERENCE_TEMP),
+        ): _number(30, 80, 1),
+        probatio.Required(
+            CONF_FLOW_REFERENCE_OUTDOOR,
+            default=values.get(
+                CONF_FLOW_REFERENCE_OUTDOOR, DEFAULT_FLOW_REFERENCE_OUTDOOR
+            ),
+        ): _number(-10, 20, 0.5),
+        probatio.Required(
+            CONF_FLOW_CURVE_SLOPE,
+            default=values.get(CONF_FLOW_CURVE_SLOPE, DEFAULT_FLOW_CURVE_SLOPE),
+        ): _number(0.2, 2.5, 0.1),
+        probatio.Required(
+            CONF_FLOW_MINIMUM,
+            default=values.get(CONF_FLOW_MINIMUM, DEFAULT_FLOW_MINIMUM),
+        ): _number(30, 70, 1),
+        probatio.Required(
+            CONF_FLOW_MAXIMUM,
+            default=values.get(CONF_FLOW_MAXIMUM, DEFAULT_FLOW_MAXIMUM),
+        ): _number(40, 82, 1),
     }
     fields.update(settings_schema(values).schema)
     return probatio.Schema(fields)
@@ -181,7 +213,18 @@ def _validate_system(hass: HomeAssistant, values: Mapping[str, Any]) -> dict[str
 
     if not hass.services.has_service(EVOHOME_DOMAIN, EVOHOME_SET_ZONE_OVERRIDE):
         errors["base"] = "evohome_service_missing"
+    minimum_flow = float(values.get(CONF_FLOW_MINIMUM, DEFAULT_FLOW_MINIMUM))
+    maximum_flow = float(values.get(CONF_FLOW_MAXIMUM, DEFAULT_FLOW_MAXIMUM))
+    if minimum_flow >= maximum_flow:
+        errors[CONF_FLOW_MAXIMUM] = "flow_maximum_not_above_minimum"
     return errors
+
+
+def _validate_flow_settings(values: Mapping[str, Any]) -> dict[str, str]:
+    """Validate fields shown separately from the controller source step."""
+    if float(values[CONF_FLOW_MINIMUM]) >= float(values[CONF_FLOW_MAXIMUM]):
+        return {CONF_FLOW_MAXIMUM: "flow_maximum_not_above_minimum"}
+    return {}
 
 
 def _validate_zone(
@@ -252,8 +295,7 @@ def _discover_evohome_zones(
 def _zone_defaults(values: Mapping[str, Any]) -> dict[str, Any]:
     """Return concrete per-zone settings from the system defaults."""
     return {
-        key: values.get(key, default)
-        for key, default in _ZONE_SETTING_DEFAULTS.items()
+        key: values.get(key, default) for key, default in _ZONE_SETTING_DEFAULTS.items()
     }
 
 
@@ -317,14 +359,19 @@ class EvohomeOptimumStartConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Configure shared fallback and new-zone defaults."""
         sources = dict(self.context["system_sources"])
+        errors: dict[str, str] = {}
         if user_input is not None:
-            controller = str(sources[CONF_CONTROLLER_ENTITY])
-            return self.async_create_entry(
-                title=f"{_friendly_name(self.hass, controller)} optimum start",
-                data=sources | user_input,
-            )
+            errors = _validate_flow_settings(user_input)
+            if not errors:
+                controller = str(sources[CONF_CONTROLLER_ENTITY])
+                return self.async_create_entry(
+                    title=f"{_friendly_name(self.hass, controller)} optimum start",
+                    data=sources | user_input,
+                )
         return self.async_show_form(
-            step_id="parameters", data_schema=system_parameters_schema({})
+            step_id="parameters",
+            data_schema=system_parameters_schema(user_input or {}),
+            errors=errors,
         )
 
     @override
@@ -378,9 +425,7 @@ class ZoneSubentryFlow(ConfigSubentryFlow):
             if CONF_ZONE_ENTITY in subentry.data
         }
         controller_id = str(entry.data[CONF_CONTROLLER_ENTITY])
-        discovered = _discover_evohome_zones(
-            self.hass, controller_id, configured
-        )
+        discovered = _discover_evohome_zones(self.hass, controller_id, configured)
         if not discovered:
             return self.async_abort(reason="no_zones_found")
 
