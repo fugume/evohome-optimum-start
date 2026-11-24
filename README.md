@@ -164,9 +164,12 @@ Keep the initial defaults:
 | Target tolerance | 0.2 °C | Counts target as reached |
 | Minimum learning rise | 0.3 °C | Rejects noisy/tiny samples |
 
-After the system is created, Home Assistant immediately opens **Add zone**. Select
-the room climate entity (not the whole-house controller), review the per-zone
-prediction values, and submit it. The zone is created disabled.
+After the system is created, Home Assistant immediately opens **Discover zones**.
+The integration finds available heating zones from the selected controller's
+official Evohome config entry, excludes the controller and existing zones, and
+selects all results by default. For an initial one-room test, deselect everything
+except the living room. Every added zone inherits the displayed system defaults and
+starts disabled.
 
 For an existing v0.2.x installation, restart Home Assistant after copying v0.3.0.
 The old single-zone entry is migrated automatically into one system entry with that
@@ -249,11 +252,15 @@ the outdoor-temperature effect as new cycles are collected.
 
 ## Scale to all zones
 
-Open the existing Evohome Optimum Start system entry and choose **Add zone** for every
-additional room. Do not add another integration entry for the same Evohome
-controller. Every zone still has its own enable switch, three-hour cap, learning
-history, predicted start, and diagnostics. Add and observe a few rooms at a time so
-you can see how simultaneous demand affects the learned rates.
+Open the existing Evohome Optimum Start system entry and choose **Discover zones**.
+All available zones that are not configured yet are selected by default; review the
+list and submit it once. Do not add another integration entry for the same Evohome
+controller. Unavailable or disabled official Evohome entities are not offered until
+they have a live zone state.
+
+Every zone still has its own enable switch, three-hour cap, learning history,
+predicted start, and diagnostics. Bulk-added zones remain disabled, so enable and
+observe a few rooms at a time to see how simultaneous demand affects learned rates.
 
 Use **Tune zone** on a zone subentry to change that room's cap or model settings.
 **Configure** on the parent system changes the shared weather source and the defaults

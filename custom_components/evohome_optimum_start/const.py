@@ -9,6 +9,7 @@ PLATFORMS: Final = ["sensor", "binary_sensor", "switch", "button"]
 SUBENTRY_TYPE_ZONE: Final = "zone"
 
 CONF_ZONE_ENTITY: Final = "zone_entity"
+CONF_ZONE_ENTITIES: Final = "zone_entities"
 CONF_CONTROLLER_ENTITY: Final = "controller_entity"
 CONF_OUTDOOR_ENTITY: Final = "outdoor_temperature_entity"
 CONF_ASSUMED_OUTDOOR: Final = "assumed_outdoor_temperature"

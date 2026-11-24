@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0
+
+- Discover every available heating zone belonging to the selected official Evohome
+  controller and present the unconfigured zones in one multi-select list.
+- Select all discovered zones by default, skip existing zone subentries, and apply
+  the system's current prediction defaults to every selected zone.
+- Keep all bulk-added zones disabled until individually reviewed and enabled.
+- Reload the integration once after the bulk operation so all new zone devices and
+  entities appear without restarting Home Assistant.
+- Add tests for controller-scoped discovery, entity filtering, duplicate exclusion,
+  friendly-name ordering, and inherited defaults.
+
 ## 0.3.2
 
 - Keep ownership across a schedule switchpoint while the official Evohome

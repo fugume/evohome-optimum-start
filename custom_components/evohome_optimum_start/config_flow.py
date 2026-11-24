@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any, override
 
 import probatio
@@ -11,6 +12,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentry,
     ConfigSubentryFlow,
     FlowType,
     OptionsFlowWithReload,
@@ -18,12 +20,17 @@ from homeassistant.config_entries import (
     SubentryFlowResult,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
 )
 
 from .const import (
@@ -37,6 +44,7 @@ from .const import (
     CONF_STORAGE_ID,
     CONF_TARGET_TOLERANCE,
     CONF_WARMUP_DELAY,
+    CONF_ZONE_ENTITIES,
     CONF_ZONE_ENTITY,
     DEFAULT_ASSUMED_OUTDOOR,
     DEFAULT_INITIAL_RATE,
@@ -74,13 +82,14 @@ SYSTEM_SOURCE_SCHEMA = probatio.Schema(
     }
 )
 
-ZONE_SOURCE_SCHEMA = probatio.Schema(
-    {
-        probatio.Required(CONF_ZONE_ENTITY): EntitySelector(
-            EntitySelectorConfig(domain="climate", integration="evohome")
-        )
-    }
-)
+_ZONE_SETTING_DEFAULTS = {
+    CONF_INITIAL_RATE: DEFAULT_INITIAL_RATE,
+    CONF_MAX_LEAD: DEFAULT_MAX_LEAD,
+    CONF_WARMUP_DELAY: DEFAULT_WARMUP_DELAY,
+    CONF_SAFETY_MARGIN: DEFAULT_SAFETY_MARGIN,
+    CONF_TARGET_TOLERANCE: DEFAULT_TARGET_TOLERANCE,
+    CONF_MINIMUM_RISE: DEFAULT_MINIMUM_RISE,
+}
 
 
 def settings_schema(values: Mapping[str, Any]) -> probatio.Schema:
@@ -199,6 +208,59 @@ def _friendly_name(hass: HomeAssistant, entity_id: str) -> str:
     return entity_id
 
 
+def _discover_evohome_zones(
+    hass: HomeAssistant,
+    controller_id: str,
+    configured: set[str],
+) -> list[str]:
+    """Return valid, unconfigured zones from the controller's Evohome entry."""
+    registry = er.async_get(hass)
+    controller_entry = registry.async_get(controller_id)
+    if controller_entry is None or controller_entry.config_entry_id is None:
+        return []
+
+    zones: list[str] = []
+    for entity in er.async_entries_for_config_entry(
+        registry, controller_entry.config_entry_id
+    ):
+        entity_id = entity.entity_id
+        if (
+            entity.domain != "climate"
+            or entity.platform != EVOHOME_DOMAIN
+            or entity_id == controller_id
+            or entity_id in configured
+            or _validate_zone(hass, entity_id, controller_id)
+        ):
+            continue
+        zones.append(entity_id)
+    return sorted(zones, key=lambda entity_id: _friendly_name(hass, entity_id).lower())
+
+
+def _zone_defaults(values: Mapping[str, Any]) -> dict[str, Any]:
+    """Return concrete per-zone settings from the system defaults."""
+    return {
+        key: values.get(key, default)
+        for key, default in _ZONE_SETTING_DEFAULTS.items()
+    }
+
+
+def _add_discovered_zones(
+    hass: HomeAssistant, entry: ConfigEntry, zone_ids: list[str]
+) -> None:
+    """Add selected zones as disabled-by-default config subentries."""
+    defaults = _zone_defaults({**entry.data, **entry.options})
+    for zone_id in zone_ids:
+        hass.config_entries.async_add_subentry(
+            entry,
+            ConfigSubentry(
+                data=MappingProxyType({CONF_ZONE_ENTITY: zone_id, **defaults}),
+                subentry_type=SUBENTRY_TYPE_ZONE,
+                title=_friendly_name(hass, zone_id),
+                unique_id=zone_id,
+            ),
+        )
+
+
 class EvohomeOptimumStartConfigFlow(ConfigFlow, domain=DOMAIN):
     """Configure one Evohome system."""
 
@@ -254,7 +316,7 @@ class EvohomeOptimumStartConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @override
     async def async_on_create_entry(self, result: ConfigFlowResult) -> ConfigFlowResult:
-        """Open the first Add zone flow after creating the system."""
+        """Open bulk zone discovery after creating the system."""
         subentry_result = await self.hass.config_entries.subentries.async_init(
             (result["result"].entry_id, SUBENTRY_TYPE_ZONE),
             context=SubentryFlowContext(source=SOURCE_USER),
@@ -289,46 +351,63 @@ class SystemOptionsFlow(OptionsFlowWithReload):
 
 
 class ZoneSubentryFlow(ConfigSubentryFlow):
-    """Add and tune one Evohome zone."""
+    """Discover, add, and tune Evohome zones."""
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        """Choose a zone entity."""
+        """Discover and add one or more missing zones using system defaults."""
         entry = self._get_entry()
         errors: dict[str, str] = {}
-        if user_input is not None:
-            zone_id = str(user_input[CONF_ZONE_ENTITY])
-            controller_id = str(entry.data[CONF_CONTROLLER_ENTITY])
-            errors = _validate_zone(self.hass, zone_id, controller_id)
-            if not errors and any(
-                subentry.data.get(CONF_ZONE_ENTITY) == zone_id
-                for subentry in entry.get_subentries_of_type(SUBENTRY_TYPE_ZONE)
-            ):
-                return self.async_abort(reason="already_configured")
-            if not errors:
-                self.context["zone_source"] = user_input
-                return await self.async_step_parameters()
-        return self.async_show_form(
-            step_id="user", data_schema=ZONE_SOURCE_SCHEMA, errors=errors
+        configured = {
+            str(subentry.data[CONF_ZONE_ENTITY])
+            for subentry in entry.get_subentries_of_type(SUBENTRY_TYPE_ZONE)
+            if CONF_ZONE_ENTITY in subentry.data
+        }
+        controller_id = str(entry.data[CONF_CONTROLLER_ENTITY])
+        discovered = _discover_evohome_zones(
+            self.hass, controller_id, configured
         )
+        if not discovered:
+            return self.async_abort(reason="no_zones_found")
 
-    async def async_step_parameters(
-        self, user_input: dict[str, Any] | None = None
-    ) -> SubentryFlowResult:
-        """Configure per-zone prediction settings."""
-        entry = self._get_entry()
-        zone_source = dict(self.context["zone_source"])
-        zone_id = str(zone_source[CONF_ZONE_ENTITY])
-        defaults = {**entry.data, **entry.options}
         if user_input is not None:
-            return self.async_create_entry(
-                title=_friendly_name(self.hass, zone_id),
-                data=zone_source | user_input,
-                unique_id=zone_id,
+            selected = [str(zone_id) for zone_id in user_input[CONF_ZONE_ENTITIES]]
+            if not selected:
+                errors[CONF_ZONE_ENTITIES] = "select_at_least_one_zone"
+            elif not set(selected).issubset(discovered):
+                errors[CONF_ZONE_ENTITIES] = "zone_no_longer_available"
+            else:
+                _add_discovered_zones(self.hass, entry, selected)
+                self.hass.config_entries.async_schedule_reload(entry.entry_id)
+                return self.async_abort(
+                    reason="zones_added",
+                    description_placeholders={"count": str(len(selected))},
+                )
+
+        options = [
+            SelectOptionDict(
+                value=zone_id,
+                label=_friendly_name(self.hass, zone_id),
             )
+            for zone_id in discovered
+        ]
         return self.async_show_form(
-            step_id="parameters", data_schema=settings_schema(defaults)
+            step_id="user",
+            data_schema=probatio.Schema(
+                {
+                    probatio.Required(
+                        CONF_ZONE_ENTITIES, default=discovered
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options,
+                            multiple=True,
+                            mode=SelectSelectorMode.LIST,
+                        )
+                    )
+                }
+            ),
+            errors=errors,
         )
 
     async def async_step_reconfigure(

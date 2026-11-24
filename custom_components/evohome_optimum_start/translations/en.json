@@ -60,27 +60,15 @@
     "zone": {
       "entry_type": "Zone",
       "initiate_flow": {
-        "user": "Add zone",
+        "user": "Discover zones",
         "reconfigure": "Tune zone"
       },
       "step": {
         "user": {
-          "title": "Add an Evohome zone",
-          "description": "Choose a room climate entity, not the whole-house controller.",
+          "title": "Discover Evohome zones",
+          "description": "Zones from this Evohome system that are not configured yet are selected by default. They will inherit the system defaults and start disabled.",
           "data": {
-            "zone_entity": "Evohome heating zone"
-          }
-        },
-        "parameters": {
-          "title": "Zone prediction settings",
-          "description": "The zone starts disabled. Review its status before turning on its Enabled switch.",
-          "data": {
-            "initial_heating_rate": "Initial heating rate (°C/hour)",
-            "maximum_lead_minutes": "Maximum lead (minutes)",
-            "warmup_delay_minutes": "Radiator warm-up delay (minutes)",
-            "safety_margin_minutes": "Safety margin (minutes)",
-            "target_tolerance": "Target tolerance (°C)",
-            "minimum_learning_rise": "Minimum rise for learning (°C)"
+            "zone_entities": "Zones to add"
           }
         },
         "reconfigure": {
@@ -96,10 +84,14 @@
         }
       },
       "error": {
-        "not_evohome_zone": "Select an Evohome heating-zone climate entity. It must expose status.setpoints and status.setpoint_status."
+        "not_evohome_zone": "Select an Evohome heating-zone climate entity. It must expose status.setpoints and status.setpoint_status.",
+        "select_at_least_one_zone": "Select at least one zone.",
+        "zone_no_longer_available": "One or more selected zones are no longer available. Review the refreshed list."
       },
       "abort": {
-        "already_configured": "This Evohome zone is already configured in this system."
+        "already_configured": "This Evohome zone is already configured in this system.",
+        "no_zones_found": "No unconfigured, available Evohome heating zones were found for this controller.",
+        "zones_added": "Added {count} zone(s). Each new zone is disabled until you review and enable it."
       }
     }
   }
