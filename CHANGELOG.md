@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1
+
+- Classify the controller as a hub so Evohome Optimum Start appears under
+  **Settings → Devices & services → Integrations**, rather than Helpers.
+
 ## 0.3.0
 
 - Represent one Evohome controller as one integration entry with independently

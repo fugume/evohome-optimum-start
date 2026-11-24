@@ -1,10 +1,10 @@
 {
   "domain": "evohome_optimum_start",
   "name": "Evohome Optimum Start",
-  "version": "0.3.0",
+  "after_dependencies": ["evohome"],
   "config_flow": true,
+  "integration_type": "hub",
   "iot_class": "calculated",
-  "integration_type": "helper",
-  "after_dependencies": ["evohome"]
+  "version": "0.3.1"
 }
 

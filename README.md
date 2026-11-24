@@ -95,7 +95,7 @@ expiry.
 
 ## Installation
 
-Version 0.3.0 requires Home Assistant 2026.11 or newer because it uses Home
+Version 0.3.0 and later require Home Assistant 2026.11 or newer because they use Home
 Assistant's current config-subentry UI for adding and tuning zones.
 
 ### Manual installation (works with this download)
