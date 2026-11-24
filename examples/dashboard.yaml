@@ -1,14 +1,96 @@
-type: entities
-title: Living room optimum start
-entities:
-  # Replace these with the entity IDs created for your zone.
-  - entity: switch.living_room_optimum_start_enabled
-  - entity: sensor.living_room_optimum_start_status
-  - entity: sensor.living_room_optimum_start_predicted_start
-  - entity: sensor.living_room_optimum_start_lead_time
-  - entity: sensor.living_room_optimum_start_predicted_heating_rate
-  - entity: sensor.living_room_optimum_start_learned_base_heating_rate
-  - entity: sensor.living_room_optimum_start_learning_samples
-  - entity: binary_sensor.living_room_optimum_start_preheating
-  - entity: button.living_room_optimum_start_reset_learning
+title: Evohome Optimum Start
+views:
+  - title: Optimum Start
+    path: optimum-start
+    icon: mdi:radiator
+    cards:
+      - type: markdown
+        title: Heating overview
+        content: |
+          {% set zones = states.sensor
+            | selectattr('attributes.zone_entity', 'defined')
+            | selectattr('attributes.controller_entity', 'defined')
+            | selectattr('attributes.assumed_outdoor_temperature', 'defined')
+            | sort(attribute='name')
+            | list %}
+          {% set summary = namespace(preheating=[], enabled=0) %}
+          {% for zone in zones %}
+            {% set name = zone.name | replace(' Status', '') %}
+            {% if zone.attributes.preheating %}
+              {% set summary.preheating = summary.preheating + [name] %}
+            {% endif %}
+            {% if zone.state != 'disabled' %}
+              {% set summary.enabled = summary.enabled + 1 %}
+            {% endif %}
+          {% endfor %}
+
+          {% if zones %}
+          **Configured zones:** {{ zones | count }}<br>
+          **Enabled zones:** {{ summary.enabled }}<br>
+          **Preheating now:** {{ summary.preheating | join(', ') if summary.preheating else 'None' }}
+          {% else %}
+          No Optimum Start zones were found. Add zones from **Settings → Devices & services → Evohome Optimum Start → Discover zones**.
+          {% endif %}
+
+      - type: markdown
+        title: Zone schedule and prediction
+        content: |
+          {% set zones = states.sensor
+            | selectattr('attributes.zone_entity', 'defined')
+            | selectattr('attributes.controller_entity', 'defined')
+            | selectattr('attributes.assumed_outdoor_temperature', 'defined')
+            | sort(attribute='name')
+            | list %}
+          {% if zones %}
+          | Zone | Status | Room | Scheduled → next | Next switch | Predicted start |
+          |:--|:--|--:|:--|:--|:--|
+          {% for zone in zones -%}
+            {% set a = zone.attributes -%}
+            {% set name = zone.name | replace(' Status', '') -%}
+          | {{ name }} | {{ zone.state | replace('_', ' ') }} | {{ '%.1f °C' | format(a.current_temperature) if a.current_temperature is number else '—' }} | {{ '%.1f' | format(a.current_scheduled_target) if a.current_scheduled_target is number else '—' }} → {{ '%.1f °C' | format(a.next_target) if a.next_target is number else '—' }} | {{ as_local(as_datetime(a.next_switch)).strftime('%a %H:%M') if a.next_switch else '—' }} | {{ as_local(as_datetime(a.predicted_start)).strftime('%a %H:%M') if a.predicted_start else '—' }} |
+          {% endfor -%}
+          {% else %}
+          No zone status sensors are available.
+          {% endif %}
+
+      - type: markdown
+        title: Learning and diagnostics
+        content: |
+          {% set zones = states.sensor
+            | selectattr('attributes.zone_entity', 'defined')
+            | selectattr('attributes.controller_entity', 'defined')
+            | selectattr('attributes.assumed_outdoor_temperature', 'defined')
+            | sort(attribute='name')
+            | list %}
+          {% if zones %}
+          | Zone | Lead | Rate | Samples | Outdoor | Last cycle | Evaluated |
+          |:--|--:|--:|--:|--:|:--|:--|
+          {% for zone in zones -%}
+            {% set a = zone.attributes -%}
+            {% set name = zone.name | replace(' Status', '') -%}
+          | {{ name }} | {{ '%.0f min' | format(a.lead_minutes) if a.lead_minutes is number else '—' }} | {{ '%.2f °C/h' | format(a.predicted_rate) if a.predicted_rate is number else '—' }} | {{ a.sample_count if a.sample_count is number else '—' }} | {{ '%.1f °C' | format(a.outdoor_temperature) if a.outdoor_temperature is number else '—' }} | {{ a.last_cycle.result | replace('_', ' ') if a.last_cycle else '—' }} | {{ as_local(as_datetime(a.last_evaluated)).strftime('%H:%M') if a.last_evaluated else '—' }} |
+          {% endfor -%}
+          {% else %}
+          No learning diagnostics are available.
+          {% endif %}
+
+      - type: markdown
+        title: Controls
+        content: |
+          Zone enable switches intentionally remain on their zone devices so that
+          newly discovered rooms cannot be enabled accidentally.
+
+          [Open Evohome Optimum Start settings](/config/integrations/integration/evohome_optimum_start)
+
+# Optional native control card for one room. Copy it into the cards list above and
+# replace the example IDs with the IDs shown on that zone's device page.
+#
+#      - type: entities
+#        title: Living room controls
+#        entities:
+#          - entity: climate.living_room
+#          - entity: switch.living_room_enabled
+#          - entity: binary_sensor.living_room_preheating
+#          - entity: sensor.living_room_status
+#          - entity: sensor.living_room_predicted_start
 

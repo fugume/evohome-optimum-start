@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.2
+
+- Replace the static one-room dashboard example with a native, dynamically generated
+  multi-zone overview requiring no custom cards, helpers, or maintained entity list.
+- Show active preheats, schedule transitions, predicted starts, learning rates,
+  sample counts, outdoor temperature, last-cycle results, and evaluation times.
+- Include an optional native control-card template for rooms where direct dashboard
+  controls are desired.
+
 ## 0.4.1
 
 - Discover official Evohome entities that have no config-entry ID, as expected for

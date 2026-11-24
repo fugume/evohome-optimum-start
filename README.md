@@ -268,6 +268,27 @@ Use **Tune zone** on a zone subentry to change that room's cap or model settings
 **Configure** on the parent system changes the shared weather source and the defaults
 offered to zones added later.
 
+## Dashboard
+
+[`examples/dashboard.yaml`](examples/dashboard.yaml) is a complete native Home
+Assistant dashboard. It needs no custom cards, helpers, or zone entity-ID list. Its
+Markdown cards identify the integration's status sensors by their diagnostic
+attributes, so zones added later appear automatically.
+
+To install it as a separate dashboard:
+
+1. Create a blank dashboard in **Settings → Dashboards**.
+2. Open it, choose **Edit dashboard → Raw configuration editor**.
+3. Replace the raw configuration with the contents of
+   `examples/dashboard.yaml`, then save.
+
+The overview shows configured/enabled counts and active preheats. The other tables
+show each zone's current and scheduled temperatures, next switch, predicted start,
+lead, learned rate, sample count, outdoor temperature, last cycle, and latest
+evaluation. Enable switches remain on the individual zone devices by design. A
+commented native entity-card example at the end of the file can be copied into the
+view if direct controls are wanted for a particular room.
+
 Do not copy Evohome schedules into Home Assistant. Do not create direct TRV or boiler
 automations for this feature. Leave Evohome Optimum Start disabled on the physical
 controller to prevent two optimizers from competing, but leave all ordinary Evohome
