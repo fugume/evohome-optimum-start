@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Discover official Evohome entities that have no config-entry ID, as expected for
+  Evohome's YAML-loaded legacy entity platform.
+- Retain config-entry scoping when available and continue requiring the official
+  `evohome` platform plus live heating-zone schedule attributes in the fallback.
+
 ## 0.4.0
 
 - Discover every available heating zone belonging to the selected official Evohome

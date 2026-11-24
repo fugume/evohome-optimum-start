@@ -216,13 +216,26 @@ def _discover_evohome_zones(
     """Return valid, unconfigured zones from the controller's Evohome entry."""
     registry = er.async_get(hass)
     controller_entry = registry.async_get(controller_id)
-    if controller_entry is None or controller_entry.config_entry_id is None:
+    if controller_entry is None:
         return []
 
+    if controller_entry.config_entry_id is not None:
+        candidates = er.async_entries_for_config_entry(
+            registry, controller_entry.config_entry_id
+        )
+    else:
+        # The official Evohome integration is configured through YAML and loads its
+        # entities as a legacy platform, so they have no config_entry_id. Home
+        # Assistant exposes one Evohome coordinator/controller for that YAML block;
+        # platform plus live zone-shape validation safely scopes this fallback.
+        candidates = [
+            entity
+            for entity in registry.entities.values()
+            if entity.platform == EVOHOME_DOMAIN
+        ]
+
     zones: list[str] = []
-    for entity in er.async_entries_for_config_entry(
-        registry, controller_entry.config_entry_id
-    ):
+    for entity in candidates:
         entity_id = entity.entity_id
         if (
             entity.domain != "climate"

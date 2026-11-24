@@ -166,10 +166,12 @@ Keep the initial defaults:
 
 After the system is created, Home Assistant immediately opens **Discover zones**.
 The integration finds available heating zones from the selected controller's
-official Evohome config entry, excludes the controller and existing zones, and
-selects all results by default. For an initial one-room test, deselect everything
-except the living room. Every added zone inherits the displayed system defaults and
-starts disabled.
+official Evohome platform, excludes the controller and existing zones, and selects
+all results by default. Evohome is normally loaded from YAML and its entities have no
+config-entry ID, so discovery also verifies the live heating-zone schedule attributes
+before offering them. For an initial one-room test, deselect everything except the
+living room. Every added zone inherits the displayed system defaults and starts
+disabled.
 
 For an existing v0.2.x installation, restart Home Assistant after copying v0.3.0.
 The old single-zone entry is migrated automatically into one system entry with that

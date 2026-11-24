@@ -146,6 +146,55 @@ class ZoneDiscoveryTests(unittest.TestCase):
         self.assertEqual(defaults["target_tolerance"], 0.2)
         self.assertEqual(defaults["minimum_learning_rise"], 0.3)
 
+    def test_discovers_yaml_loaded_evohome_entities_without_config_entry(self) -> None:
+        hass = FakeHass(
+            {
+                "climate.bedroom": zone_state("climate.bedroom", "Bedroom"),
+                "climate.kitchen": zone_state("climate.kitchen", "Kitchen"),
+            }
+        )
+        entries = [
+            SimpleNamespace(
+                entity_id="climate.home", domain="climate", platform="evohome"
+            ),
+            SimpleNamespace(
+                entity_id="climate.bedroom", domain="climate", platform="evohome"
+            ),
+            SimpleNamespace(
+                entity_id="climate.kitchen", domain="climate", platform="evohome"
+            ),
+            SimpleNamespace(
+                entity_id="climate.unrelated",
+                domain="climate",
+                platform="generic_thermostat",
+            ),
+        ]
+        registry = SimpleNamespace(
+            async_get=lambda entity_id: SimpleNamespace(config_entry_id=None)
+            if entity_id == "climate.home"
+            else None,
+            entities=SimpleNamespace(values=lambda: entries),
+        )
+
+        with (
+            patch(
+                "custom_components.evohome_optimum_start.config_flow.er.async_get",
+                return_value=registry,
+            ),
+            patch(
+                "custom_components.evohome_optimum_start.config_flow.er."
+                "async_entries_for_config_entry"
+            ) as entries_for_config,
+        ):
+            discovered = _discover_evohome_zones(
+                hass,  # type: ignore[arg-type]
+                "climate.home",
+                {"climate.kitchen"},
+            )
+
+        self.assertEqual(discovered, ["climate.bedroom"])
+        entries_for_config.assert_not_called()
+
     def test_bulk_add_creates_one_disabled_by_default_subentry_per_zone(self) -> None:
         hass = FakeHass(
             {
