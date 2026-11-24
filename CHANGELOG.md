@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.2
+
+- Keep ownership across a schedule switchpoint while the official Evohome
+  integration still exposes its previous poll, reporting
+  `waiting_for_schedule_sync` instead of misclassifying the owned override as a
+  manual override.
+- Reset an override after the switchpoint only when both its target and expiry
+  still identify it as the integration's own; continue protecting changed user
+  overrides.
+- Send the zero duration as the JSON-safe string `00:00:00`, avoiding Recorder
+  serialization warnings while preserving Evohome's next-switchpoint semantics.
+- Add controller regressions for stale switchpoint data, post-switch reset, manual
+  override protection, and JSON-serializable action data.
+
 ## 0.3.1
 
 - Classify the controller as a hub so Evohome Optimum Start appears under

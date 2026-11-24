@@ -57,6 +57,9 @@ from .learning import HeatingModel, HeatingSample
 
 _LOGGER = logging.getLogger(__name__)
 
+_SCHEDULE_SYNC_TIMEOUT = timedelta(minutes=15)
+_SCHEDULE_SYNC_RESET_RETRY = timedelta(minutes=2)
+
 
 def _as_float(value: Any) -> float | None:
     """Return a finite float or None."""
@@ -317,6 +320,20 @@ class ZoneController:
         )
         return target_matches and expiry_matches
 
+    def _expired_active_matches_exactly(self, zone: Mapping[str, Any]) -> bool:
+        """Return whether an expired override has our target and expiry."""
+        if not self._active_matches(zone):
+            return False
+        live_until = zone.get("override_until")
+        own_until = (
+            _parse_datetime(self.active.get("switch_time")) if self.active else None
+        )
+        return (
+            live_until is not None
+            and own_until is not None
+            and abs((live_until - own_until).total_seconds()) <= 120
+        )
+
     async def _save(self) -> None:
         await self._store.async_save(
             {
@@ -426,6 +443,37 @@ class ZoneController:
         }
         await self._save()
 
+    async def _reset_expired_owned_override(self, now: datetime) -> None:
+        """Reset a positively identified override that survived its switchpoint."""
+        if not self.active:
+            return
+        retry_after = _parse_datetime(
+            self.active.get("schedule_sync_reset_retry_after")
+        )
+        if retry_after and now < retry_after:
+            return
+        try:
+            await self.hass.services.async_call(
+                CLIMATE_DOMAIN,
+                "set_preset_mode",
+                {ATTR_ENTITY_ID: self.zone_entity, ATTR_PRESET_MODE: "none"},
+                blocking=True,
+            )
+        except Exception:  # Home Assistant service exceptions vary by release.
+            _LOGGER.exception(
+                "Could not reset expired owned Evohome override for %s", self.title
+            )
+            self.active["schedule_sync_reset_retry_after"] = (
+                now + _SCHEDULE_SYNC_RESET_RETRY
+            ).isoformat()
+        else:
+            self.active["schedule_sync_reset_sent_at"] = now.isoformat()
+            # Do not repeatedly reset while waiting for the next Evohome poll.
+            self.active["schedule_sync_reset_retry_after"] = (
+                now + _SCHEDULE_SYNC_TIMEOUT
+            ).isoformat()
+        await self._save()
+
     async def _handle_active(
         self,
         *,
@@ -464,9 +512,68 @@ class ZoneController:
                 outdoor_c=outdoor_c,
                 reached_target=zone["current"] >= target_c - self.target_tolerance,
             )
-            self.active = None
+
+            # Our one-minute timer can cross the switchpoint before the official
+            # Evohome integration's next (normally five-minute) cloud poll. Keep
+            # ownership until the native schedule has visibly advanced; otherwise
+            # the stale TemporaryOverride would be mistaken for a user override.
+            if zone["mode"] == PERMANENT_OVERRIDE or (
+                zone["mode"] == TEMPORARY_OVERRIDE and not self._active_matches(zone)
+            ):
+                self.last_cycle = {
+                    **(self.last_cycle or {}),
+                    "schedule_sync_result": "override_changed_by_user",
+                    "schedule_sync_finished_at": now.isoformat(),
+                }
+                self.active = None
+                await self._save()
+                return False
+
+            schedule_advanced = zone["next_time"] > switch_time
+            if zone["mode"] == FOLLOW_SCHEDULE and schedule_advanced:
+                self.last_cycle = {
+                    **(self.last_cycle or {}),
+                    "schedule_sync_result": "follow_schedule",
+                    "schedule_sync_finished_at": now.isoformat(),
+                }
+                self.active = None
+                await self._save()
+                return False
+
+            if (
+                zone["mode"] == TEMPORARY_OVERRIDE
+                and schedule_advanced
+                and self._expired_active_matches_exactly(zone)
+                and not self.active.get("schedule_sync_reset_sent_at")
+            ):
+                await self._reset_expired_owned_override(now)
+
+            reset_sent_at = _parse_datetime(
+                self.active.get("schedule_sync_reset_sent_at")
+            )
+            sync_timed_out = (
+                now - reset_sent_at >= _SCHEDULE_SYNC_TIMEOUT
+                if reset_sent_at
+                else now - switch_time >= _SCHEDULE_SYNC_TIMEOUT
+            )
+            if sync_timed_out:
+                # Do not retain ownership indefinitely if Evohome never confirms
+                # the transition. A possibly ambiguous override is left untouched.
+                self.last_cycle = {
+                    **(self.last_cycle or {}),
+                    "schedule_sync_result": (
+                        "reset_unconfirmed" if reset_sent_at else "timed_out"
+                    ),
+                    "schedule_sync_finished_at": now.isoformat(),
+                }
+                self.active = None
+                await self._save()
+                return False
+
+            self.active["phase"] = "waiting_for_schedule_sync"
+            self.active.setdefault("schedule_sync_started_at", switch_time.isoformat())
             await self._save()
-            return False
+            return True
 
         live_next_time = zone["next_time"]
         live_next_target = zone["next_target"]
@@ -575,14 +682,21 @@ class ZoneController:
                     switch_time = _parse_datetime(self.active.get("switch_time"))
                     active_rate = _as_float(self.active.get("predicted_rate"))
                     active_lead = _as_float(self.active.get("predicted_lead_minutes"))
+                    waiting_for_sync = (
+                        self.active.get("phase") == "waiting_for_schedule_sync"
+                    )
                     self._set_snapshot(
                         status=(
                             "cancellation_pending"
                             if self.active.get("cancel_pending")
-                            else "preheating"
+                            else (
+                                "waiting_for_schedule_sync"
+                                if waiting_for_sync
+                                else "preheating"
+                            )
                         ),
                         available=True,
-                        preheating=True,
+                        preheating=not waiting_for_sync,
                         predicted_start=_parse_datetime(self.active.get("started_at")),
                         lead_minutes=(
                             round(active_lead, 1) if active_lead is not None else None
@@ -600,7 +714,9 @@ class ZoneController:
                         ),
                         current_temperature=zone["current"],
                         current_temperature_source=zone["current_source"],
+                        current_scheduled_target=zone["this_target"],
                         next_target=zone["next_target"],
+                        next_switch=zone["next_time"],
                         outdoor_temperature=outdoor_c,
                         outdoor_temperature_source=outdoor_source,
                         system_mode=system_mode,
@@ -698,7 +814,9 @@ class ZoneController:
                         "setpoint": zone["next_target"],
                         # The official Evohome integration maps zero to the next
                         # scheduled switchpoint. Omitting this would be permanent.
-                        "duration": timedelta(0),
+                        # Keep the call_service event JSON serializable; the service
+                        # schema converts this string to timedelta(0) for Evohome.
+                        "duration": "00:00:00",
                     },
                     blocking=True,
                 )

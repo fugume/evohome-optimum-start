@@ -56,7 +56,13 @@ and the user override is left alone.
 If Away, Heating Off, Day Off, Custom, or another protected system mode begins during
 an owned preheat, the integration resets only its own zone override and stands down.
 Disabling the integration behaves the same way. At the normal schedule switchpoint,
-the zero-duration Evohome override expires by itself.
+the zero-duration Evohome override expires by itself. Because the official Evohome
+integration normally polls every five minutes, Home Assistant can continue exposing
+the pre-switch `TemporaryOverride` briefly after that time. During this interval the
+controller retains ownership, reports `waiting_for_schedule_sync`, and does not make
+a new optimum-start decision. It completes the cycle when a newer schedule is
+visible. If fresh data proves that the exact owned override survived its expiry, the
+controller safely resets it; a changed user override is never reset.
 
 ## Learning model
 
@@ -190,6 +196,8 @@ Useful states are:
 - `protected_manual_zone_override` — a user override is active;
 - `protected_system_mode_*` — not in Auto/AutoWithReset;
 - `preheating` — this integration owns a temporary override.
+- `waiting_for_schedule_sync` — the switchpoint has passed and the controller is
+  waiting for a fresh Evohome poll before releasing ownership.
 
 ### 4. Optional direct action check
 
@@ -220,8 +228,11 @@ preheat cycles. Confirm:
 - `Learning samples` increases after a useful temperature rise.
 
 The official Evohome cloud integration polls every five minutes by default, so status
-changes can lag. Prediction is checked every minute, but practical start-time
-resolution is bounded by the Evohome poll/update interval.
+changes can cross a native schedule switchpoint before Home Assistant receives the
+new state. Prediction is checked every minute, but practical start-time resolution is
+bounded by the Evohome poll/update interval. The controller explicitly preserves
+ownership through this boundary rather than interpreting the stale state as a manual
+override.
 
 The controller deliberately uses the climate entity's public `current_temperature`
 attribute. Current Home Assistant may populate this from Evohome's separately polled
@@ -287,7 +298,8 @@ python3 -m unittest discover -s tests -v
 
 The validation checks Python syntax, JSON files, required integration files, and
 translation parity. Unit tests exercise sample rejection, regression, outdoor
-compensation, the maximum-lead cap, and the overnight re-evaluation regression. The
-two controller/service tests run when the Home Assistant Python package is installed
-and otherwise report as skipped; the pure model and decision tests always run.
+compensation, the maximum-lead cap, overnight re-evaluation, switchpoint polling lag,
+manual-override protection, and JSON-safe service payloads. Controller/service tests
+run when the Home Assistant Python package is installed and otherwise report as
+skipped; the pure model and decision tests always run.
 

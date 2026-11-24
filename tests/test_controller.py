@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -59,7 +60,25 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
 
     switch = datetime(2026, 11, 24, 7, 30, tzinfo=UTC)
 
-    def zone_state(self, current: float, mode: str = "FollowSchedule") -> State:
+    def zone_state(
+        self,
+        current: float,
+        mode: str = "FollowSchedule",
+        *,
+        this_target: float = 14.0,
+        next_target: float = 20.0,
+        next_switch: datetime | None = None,
+        effective_target: float | None = None,
+        override_until: datetime | None = None,
+    ) -> State:
+        setpoint_status: dict[str, object] = {
+            "setpoint_mode": mode,
+            "target_heat_temperature": (
+                this_target if effective_target is None else effective_target
+            ),
+        }
+        if override_until is not None:
+            setpoint_status["until"] = override_until.isoformat()
         return State(
             "climate.living_room",
             "heat",
@@ -68,14 +87,13 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
                 "temperature_unit": "°C",
                 "status": {
                     "setpoints": {
-                        "this_sp_temp": 14.0,
-                        "next_sp_temp": 20.0,
-                        "next_sp_from": self.switch.isoformat(),
+                        "this_sp_temp": this_target,
+                        "next_sp_temp": next_target,
+                        "next_sp_from": (
+                            next_switch or self.switch
+                        ).isoformat(),
                     },
-                    "setpoint_status": {
-                        "setpoint_mode": mode,
-                        "target_heat_temperature": 14.0,
-                    },
+                    "setpoint_status": setpoint_status,
                     "temperature_status": {"temperature": current},
                 },
             },
@@ -134,8 +152,99 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((domain, service), ("evohome", "set_zone_override"))
         self.assertEqual(data["entity_id"], "climate.living_room")
         self.assertEqual(data["setpoint"], 20.0)
-        self.assertEqual(data["duration"], timedelta(0))
+        self.assertEqual(data["duration"], "00:00:00")
+        json.dumps(data)
         self.assertTrue(blocking)
+
+    async def test_stale_override_is_owned_across_switchpoint(self) -> None:
+        controller, hass = self.make_controller(17.5)
+        await controller.async_evaluate(datetime(2026, 11, 24, 7, 6, tzinfo=UTC))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.8,
+            "TemporaryOverride",
+            effective_target=20.0,
+            override_until=self.switch,
+        )
+        await controller.async_evaluate(self.switch + timedelta(seconds=30))
+
+        self.assertIsNotNone(controller.active)
+        self.assertEqual(controller.snapshot["status"], "waiting_for_schedule_sync")
+        self.assertFalse(controller.snapshot["preheating"])
+        self.assertEqual(len(hass.services.calls), 1)
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            20.0,
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=20.0,
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=5))
+
+        self.assertIsNone(controller.active)
+        self.assertEqual(
+            controller.snapshot["status"],
+            "next_switch_is_not_a_temperature_increase",
+        )
+        self.assertEqual(
+            controller.last_cycle["schedule_sync_result"], "follow_schedule"
+        )
+
+    async def test_expired_owned_override_is_safely_reset(self) -> None:
+        controller, hass = self.make_controller(17.5)
+        await controller.async_evaluate(datetime(2026, 11, 24, 7, 6, tzinfo=UTC))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.5,
+            "TemporaryOverride",
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=20.0,
+            override_until=self.switch,
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=5))
+
+        self.assertIsNotNone(controller.active)
+        self.assertEqual(controller.snapshot["status"], "waiting_for_schedule_sync")
+        self.assertEqual(len(hass.services.calls), 2)
+        domain, service, data, blocking = hass.services.calls[1]
+        self.assertEqual((domain, service), ("climate", "set_preset_mode"))
+        self.assertEqual(data["entity_id"], "climate.living_room")
+        self.assertEqual(data["preset_mode"], "none")
+        self.assertTrue(blocking)
+
+        await controller.async_evaluate(self.switch + timedelta(minutes=6))
+        self.assertEqual(len(hass.services.calls), 2)
+
+        await controller.async_evaluate(self.switch + timedelta(minutes=21))
+        self.assertIsNone(controller.active)
+        self.assertEqual(len(hass.services.calls), 2)
+        self.assertEqual(
+            controller.last_cycle["schedule_sync_result"], "reset_unconfirmed"
+        )
+
+    async def test_different_override_after_switchpoint_is_protected(self) -> None:
+        controller, hass = self.make_controller(17.5)
+        await controller.async_evaluate(datetime(2026, 11, 24, 7, 6, tzinfo=UTC))
+
+        hass.states._states["climate.living_room"] = self.zone_state(
+            19.0,
+            "TemporaryOverride",
+            this_target=20.0,
+            next_target=14.0,
+            next_switch=self.switch + timedelta(hours=4),
+            effective_target=21.0,
+            override_until=self.switch + timedelta(hours=2),
+        )
+        await controller.async_evaluate(self.switch + timedelta(minutes=5))
+
+        self.assertIsNone(controller.active)
+        self.assertEqual(
+            controller.snapshot["status"], "protected_manual_zone_override"
+        )
+        self.assertEqual(len(hass.services.calls), 1)
 
     async def test_manual_override_is_never_replaced(self) -> None:
         controller, hass = self.make_controller(17.5)
