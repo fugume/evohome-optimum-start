@@ -149,8 +149,7 @@ class HeatingModel:
         mean_y = sum(y * weight for _, y, weight in weighted) / sum_w
         variance_x = sum(weight * (x - mean_x) ** 2 for x, _, weight in weighted)
         covariance = sum(
-            weight * (x - mean_x) * (y - mean_y)
-            for x, y, weight in weighted
+            weight * (x - mean_x) * (y - mean_y) for x, y, weight in weighted
         )
         slope = covariance / variance_x if variance_x >= 1.0 else 0.0
         slope = clamp(slope, -MAX_OUTDOOR_SLOPE, MAX_OUTDOOR_SLOPE)
@@ -182,4 +181,3 @@ class HeatingModel:
         rise = max(0.0, target_c - current_c)
         raw_lead = warmup_delay + safety_margin + rise * 60.0 / rate
         return min(maximum_lead, raw_lead), rate, raw_lead > maximum_lead
-

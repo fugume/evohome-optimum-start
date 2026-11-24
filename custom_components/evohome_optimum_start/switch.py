@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from . import EvohomeOptimumStartConfigEntry
 from .controller import ZoneController
 from .entity import OptimumStartEntity
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: EvohomeOptimumStartConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up enable switch."""
-    controller: ZoneController = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([EnabledSwitch(controller)])
+    for subentry_id, controller in entry.runtime_data.zones.items():
+        async_add_entities([EnabledSwitch(controller)], config_subentry_id=subentry_id)
 
 
 class EnabledSwitch(OptimumStartEntity, SwitchEntity):
@@ -44,4 +43,3 @@ class EnabledSwitch(OptimumStartEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs: object) -> None:
         await self.controller.async_set_enabled(False)
-

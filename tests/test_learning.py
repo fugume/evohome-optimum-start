@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
 import unittest
+from pathlib import Path
 
 COMPONENT = Path(__file__).parents[1] / "custom_components" / "evohome_optimum_start"
 sys.path.insert(0, str(COMPONENT))
@@ -90,4 +90,3 @@ class HeatingModelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

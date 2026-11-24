@@ -1,7 +1,7 @@
 {
   "domain": "evohome_optimum_start",
   "name": "Evohome Optimum Start",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "config_flow": true,
   "iot_class": "calculated",
   "integration_type": "helper",

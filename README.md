@@ -5,7 +5,9 @@ Assistant **Honeywell Total Connect Comfort (Europe)** / Evohome integration.
 
 It does one thing: for each configured room, it asks Evohome for the *next native
 scheduled setpoint* and starts that setpoint early enough for the room to be warm at
-the switchpoint. Evohome continues to own its schedules, TRVs, heat demand, boiler
+the switchpoint. One integration entry represents the Evohome system; its zone
+subentries keep independent learning and controls while sharing one timer and source
+listener. Evohome continues to own its schedules, TRVs, heat demand, boiler
 relay/modulation, and fail-safe behavior.
 
 Newly configured zones start **disabled**. No Evohome setting is changed until you
@@ -93,6 +95,9 @@ expiry.
 
 ## Installation
 
+Version 0.3.0 requires Home Assistant 2026.11 or newer because it uses Home
+Assistant's current config-subentry UI for adding and tuning zones.
+
 ### Manual installation (works with this download)
 
 1. Copy the directory
@@ -133,11 +138,10 @@ Expected values include `FollowSchedule`, numeric temperatures, an ISO timestamp
 `Auto` (or `AutoWithReset`). If these are absent, update/reload the official Evohome
 integration before proceeding.
 
-### 2. Add the sample zone
+### 2. Add the Evohome system
 
 Select:
 
-- **Evohome heating zone:** the room climate entity, not the whole-house controller.
 - **Evohome system controller:** the whole-house Evohome climate entity.
 - **Outdoor temperature sensor or weather entity:** optionally select a reliable
   temperature sensor or a `weather.*` entity. Leave it blank if you do not have one.
@@ -154,22 +158,29 @@ Keep the initial defaults:
 | Target tolerance | 0.2 °C | Counts target as reached |
 | Minimum learning rise | 0.3 °C | Rejects noisy/tiny samples |
 
+After the system is created, Home Assistant immediately opens **Add zone**. Select
+the room climate entity (not the whole-house controller), review the per-zone
+prediction values, and submit it. The zone is created disabled.
+
+For an existing v0.2.x installation, restart Home Assistant after copying v0.3.0.
+The old single-zone entry is migrated automatically into one system entry with that
+zone beneath it. Its enabled state, learning samples, entity IDs, and device are
+preserved. Do not delete and recreate the entry before testing the migration.
+
 ### 3. Inspect while disabled
 
-Open the new device and inspect:
+Open the new zone device and inspect the default entities:
 
 - `Status`
 - `Predicted start`
-- `Lead time`
-- `Predicted heating rate`
-- `Learned base heating rate`
-- `Learning samples`
 - `Preheating`
 - `Enabled`
 
-The `Status` entity's attributes also show the next switchpoint, scheduled targets,
-system/zone modes, outdoor temperature and its source, whether the lead was capped, the learned
-outdoor slope, and the last cycle result.
+The detailed `Lead time`, heating-rate, sample-count, and `Reset learning` entities
+are created disabled to avoid clutter. Enable any you want from the zone's entity
+list. The `Status` entity always exposes the same details as attributes, including
+`last_evaluated`, the next switchpoint, scheduled targets, system/zone modes,
+outdoor temperature and source, lead cap, learned slope, and last cycle result.
 
 Useful states are:
 
@@ -221,16 +232,21 @@ older and is used only as a fallback.
 
 You can begin with the 7 °C fallback. After adding any Home Assistant weather
 integration, open **Settings → Devices & services → Evohome Optimum Start → Configure**
-and select its `weather.*` entity as the outdoor source. Existing zone learning is
-kept. The controller will begin learning the outdoor-temperature effect as new cycles
-are collected.
+on the system entry and select its `weather.*` entity as the outdoor source. It is
+shared by all zones. Existing zone learning is kept, and each zone begins learning
+the outdoor-temperature effect as new cycles are collected.
 
 ## Scale to all zones
 
-For every additional room, choose **Add integration → Evohome Optimum Start** again.
-Each entry is independent: it has its own enable switch, three-hour cap, learning
+Open the existing Evohome Optimum Start system entry and choose **Add zone** for every
+additional room. Do not add another integration entry for the same Evohome
+controller. Every zone still has its own enable switch, three-hour cap, learning
 history, predicted start, and diagnostics. Add and observe a few rooms at a time so
 you can see how simultaneous demand affects the learned rates.
+
+Use **Tune zone** on a zone subentry to change that room's cap or model settings.
+**Configure** on the parent system changes the shared weather source and the defaults
+offered to zones added later.
 
 Do not copy Evohome schedules into Home Assistant. Do not create direct TRV or boiler
 automations for this feature. Leave Evohome Optimum Start disabled on the physical
@@ -254,9 +270,10 @@ schedules enabled.
 
 - To pause one room, turn off its `Enabled` switch. If it owns a live preheat, only
   that matching override is reset.
-- Removing the integration entry unloads the controller. Disable it first if it is
+- Removing one zone subentry removes only that room. Disable it first if it is
   currently preheating.
-- Deleting the entry removes its entities. Home Assistant may retain its `.storage`
+- Removing the parent integration entry removes every configured zone. Home
+  Assistant may retain its `.storage`
   file; this contains only numeric learning samples and entity IDs, no credentials.
 
 ## Local validation
@@ -270,5 +287,7 @@ python3 -m unittest discover -s tests -v
 
 The validation checks Python syntax, JSON files, required integration files, and
 translation parity. Unit tests exercise sample rejection, regression, outdoor
-compensation, and the maximum-lead cap without needing a Home Assistant installation.
+compensation, the maximum-lead cap, and the overnight re-evaluation regression. The
+two controller/service tests run when the Home Assistant Python package is installed
+and otherwise report as skipped; the pure model and decision tests always run.
 

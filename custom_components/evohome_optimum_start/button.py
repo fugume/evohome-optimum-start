@@ -3,24 +3,25 @@
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from . import EvohomeOptimumStartConfigEntry
 from .controller import ZoneController
 from .entity import OptimumStartEntity
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: EvohomeOptimumStartConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up reset-learning button."""
-    controller: ZoneController = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([ResetLearningButton(controller)])
+    for subentry_id, controller in entry.runtime_data.zones.items():
+        async_add_entities(
+            [ResetLearningButton(controller)], config_subentry_id=subentry_id
+        )
 
 
 class ResetLearningButton(OptimumStartEntity, ButtonEntity):
@@ -28,6 +29,7 @@ class ResetLearningButton(OptimumStartEntity, ButtonEntity):
 
     _attr_icon = "mdi:history"
     _attr_entity_category = EntityCategory.CONFIG
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, controller: ZoneController) -> None:
         super().__init__(controller, "reset_learning", "Reset learning")
@@ -38,4 +40,3 @@ class ResetLearningButton(OptimumStartEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.controller.async_reset_learning()
-

@@ -38,4 +38,3 @@ class OptimumStartEntity(Entity):
     def available(self) -> bool:
         """Return source data availability."""
         return bool(self.controller.snapshot.get("available", False))
-

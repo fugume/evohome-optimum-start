@@ -6,6 +6,7 @@ from typing import Final
 
 DOMAIN: Final = "evohome_optimum_start"
 PLATFORMS: Final = ["sensor", "binary_sensor", "switch", "button"]
+SUBENTRY_TYPE_ZONE: Final = "zone"
 
 CONF_ZONE_ENTITY: Final = "zone_entity"
 CONF_CONTROLLER_ENTITY: Final = "controller_entity"
@@ -17,6 +18,7 @@ CONF_WARMUP_DELAY: Final = "warmup_delay_minutes"
 CONF_SAFETY_MARGIN: Final = "safety_margin_minutes"
 CONF_TARGET_TOLERANCE: Final = "target_tolerance"
 CONF_MINIMUM_RISE: Final = "minimum_learning_rise"
+CONF_STORAGE_ID: Final = "storage_id"
 
 DEFAULT_INITIAL_RATE: Final = 0.7
 DEFAULT_ASSUMED_OUTDOOR: Final = 7.0
@@ -42,4 +44,3 @@ REFERENCE_OUTDOOR_C: Final = 10.0
 MIN_RATE: Final = 0.15
 MAX_RATE: Final = 3.5
 MAX_OUTDOOR_SLOPE: Final = 0.08
-

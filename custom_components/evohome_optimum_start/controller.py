@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
-import logging
 from typing import Any
 
 from homeassistant.components.climate import ATTR_PRESET_MODE
-from homeassistant.const import ATTR_ENTITY_ID, ATTR_UNIT_OF_MEASUREMENT, UnitOfTemperature
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    ATTR_UNIT_OF_MEASUREMENT,
+    UnitOfTemperature,
+)
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers.event import (
     async_call_later,
@@ -32,8 +36,8 @@ from .const import (
     CONF_TARGET_TOLERANCE,
     CONF_WARMUP_DELAY,
     CONF_ZONE_ENTITY,
-    DEFAULT_INITIAL_RATE,
     DEFAULT_ASSUMED_OUTDOOR,
+    DEFAULT_INITIAL_RATE,
     DEFAULT_MAX_LEAD,
     DEFAULT_MINIMUM_RISE,
     DEFAULT_SAFETY_MARGIN,
@@ -48,6 +52,7 @@ from .const import (
     STORAGE_VERSION,
     TEMPORARY_OVERRIDE,
 )
+from .decision import DecisionInput, decide
 from .learning import HeatingModel, HeatingSample
 
 _LOGGER = logging.getLogger(__name__)
@@ -103,18 +108,14 @@ class ZoneController:
         )
         self.initial_rate = float(config.get(CONF_INITIAL_RATE, DEFAULT_INITIAL_RATE))
         self.maximum_lead = float(config.get(CONF_MAX_LEAD, DEFAULT_MAX_LEAD))
-        self.warmup_delay = float(
-            config.get(CONF_WARMUP_DELAY, DEFAULT_WARMUP_DELAY)
-        )
+        self.warmup_delay = float(config.get(CONF_WARMUP_DELAY, DEFAULT_WARMUP_DELAY))
         self.safety_margin = float(
             config.get(CONF_SAFETY_MARGIN, DEFAULT_SAFETY_MARGIN)
         )
         self.target_tolerance = float(
             config.get(CONF_TARGET_TOLERANCE, DEFAULT_TARGET_TOLERANCE)
         )
-        self.minimum_rise = float(
-            config.get(CONF_MINIMUM_RISE, DEFAULT_MINIMUM_RISE)
-        )
+        self.minimum_rise = float(config.get(CONF_MINIMUM_RISE, DEFAULT_MINIMUM_RISE))
 
         self.model = HeatingModel(self.initial_rate, [])
         # New zones are deliberately inert until the user reviews diagnostics and
@@ -131,7 +132,9 @@ class ZoneController:
             "predicted_rate": self.initial_rate,
             "sample_count": 0,
             "lead_capped": False,
+            "last_evaluated": None,
         }
+        self._last_evaluated: datetime | None = None
         self._listeners: list[Callable[[], None]] = []
         self._entity_listeners: list[Callable[[], None]] = []
         self._lock = asyncio.Lock()
@@ -139,8 +142,10 @@ class ZoneController:
             hass, STORAGE_VERSION, f"{STORAGE_KEY_PREFIX}{entry_id}"
         )
 
-    async def async_start(self) -> None:
-        """Load learning data and start listeners."""
+    async def async_start(
+        self, *, manage_listeners: bool = True, evaluate: bool = True
+    ) -> None:
+        """Load learning data and optionally start per-zone listeners."""
         stored = await self._store.async_load() or {}
         self.enabled = bool(stored.get("enabled", False))
         samples: list[HeatingSample] = []
@@ -155,21 +160,23 @@ class ZoneController:
         last_cycle = stored.get("last_cycle")
         self.last_cycle = last_cycle if isinstance(last_cycle, dict) else None
 
-        tracked = [self.zone_entity, self.controller_entity]
-        if self.outdoor_entity:
-            tracked.append(self.outdoor_entity)
-        self._listeners.append(
-            async_track_state_change_event(self.hass, tracked, self._state_changed)
-        )
-        self._listeners.append(
-            async_track_time_interval(
-                self.hass, self._timer_fired, timedelta(minutes=1)
+        if manage_listeners:
+            tracked = [self.zone_entity, self.controller_entity]
+            if self.outdoor_entity:
+                tracked.append(self.outdoor_entity)
+            self._listeners.append(
+                async_track_state_change_event(self.hass, tracked, self._state_changed)
             )
-        )
-        self._listeners.append(
-            async_call_later(self.hass, 10, self._initial_evaluation)
-        )
-        await self.async_evaluate()
+            self._listeners.append(
+                async_track_time_interval(
+                    self.hass, self._timer_fired, timedelta(minutes=1)
+                )
+            )
+            self._listeners.append(
+                async_call_later(self.hass, 10, self._initial_evaluation)
+            )
+        if evaluate:
+            await self.async_evaluate()
 
     async def async_stop(self) -> None:
         """Stop listeners."""
@@ -357,7 +364,9 @@ class ZoneController:
                     blocking=True,
                 )
             except Exception:  # Home Assistant service exceptions vary by release.
-                _LOGGER.exception("Could not cancel owned Evohome override for %s", self.title)
+                _LOGGER.exception(
+                    "Could not cancel owned Evohome override for %s", self.title
+                )
                 self.active["cancel_pending"] = reason
                 self.active["cancel_retry_after"] = (
                     datetime.now(UTC) + timedelta(minutes=2)
@@ -507,13 +516,25 @@ class ZoneController:
         return True
 
     def _set_snapshot(self, **values: Any) -> None:
-        self.snapshot.update(values)
-        self.snapshot["sample_count"] = len(self.model.samples)
+        snapshot = {**self.snapshot, **values}
+        snapshot["last_evaluated"] = self._last_evaluated
+        snapshot["sample_count"] = len(self.model.samples)
         base, slope = self.model.fit()
-        self.snapshot["learned_base_rate"] = round(base, 3)
-        self.snapshot["outdoor_slope"] = round(slope, 4)
-        self.snapshot["last_cycle"] = self.last_cycle
+        snapshot["learned_base_rate"] = round(base, 3)
+        snapshot["outdoor_slope"] = round(slope, 4)
+        snapshot["last_cycle"] = self.last_cycle
+        self.snapshot = snapshot
         self._publish()
+
+    def set_evaluation_error(self, evaluated_at: datetime, error: Exception) -> None:
+        """Publish an unexpected evaluation failure without stopping other zones."""
+        self._last_evaluated = evaluated_at
+        self._set_snapshot(
+            status="evaluation_error",
+            available=False,
+            preheating=bool(self.active),
+            evaluation_error=type(error).__name__,
+        )
 
     async def async_evaluate(self, now: datetime | None = None) -> None:
         """Evaluate the next switchpoint and act if optimum start is due."""
@@ -521,6 +542,8 @@ class ZoneController:
             return
         async with self._lock:
             now = (now or datetime.now(UTC)).astimezone(UTC)
+            self._last_evaluated = now
+            self.snapshot = {**self.snapshot, "evaluation_error": None}
             zone_state = self.hass.states.get(self.zone_entity)
             controller_state = self.hass.states.get(self.controller_entity)
             if not zone_state or not controller_state:
@@ -550,6 +573,8 @@ class ZoneController:
                 )
                 if active:
                     switch_time = _parse_datetime(self.active.get("switch_time"))
+                    active_rate = _as_float(self.active.get("predicted_rate"))
+                    active_lead = _as_float(self.active.get("predicted_lead_minutes"))
                     self._set_snapshot(
                         status=(
                             "cancellation_pending"
@@ -559,6 +584,15 @@ class ZoneController:
                         available=True,
                         preheating=True,
                         predicted_start=_parse_datetime(self.active.get("started_at")),
+                        lead_minutes=(
+                            round(active_lead, 1) if active_lead is not None else None
+                        ),
+                        lead_capped=bool(self.active.get("lead_capped", False)),
+                        predicted_rate=(
+                            round(active_rate, 3)
+                            if active_rate is not None
+                            else self.snapshot.get("predicted_rate")
+                        ),
                         minutes_to_switch=(
                             max(0.0, (switch_time - now).total_seconds() / 60.0)
                             if switch_time
@@ -589,52 +623,6 @@ class ZoneController:
                 "system_mode": system_mode,
                 "zone_mode": zone["mode"],
             }
-            if not self.enabled:
-                self._set_snapshot(
-                    **base_snapshot,
-                    status="disabled",
-                    predicted_start=None,
-                    lead_minutes=None,
-                    lead_capped=False,
-                )
-                return
-            if system_mode not in SAFE_SYSTEM_MODES:
-                self._set_snapshot(
-                    **base_snapshot,
-                    status=f"protected_system_mode_{system_mode}",
-                    predicted_start=None,
-                    lead_minutes=None,
-                    lead_capped=False,
-                )
-                return
-            if zone["mode"] != FOLLOW_SCHEDULE:
-                self._set_snapshot(
-                    **base_snapshot,
-                    status="protected_manual_zone_override",
-                    predicted_start=None,
-                    lead_minutes=None,
-                    lead_capped=False,
-                )
-                return
-            if zone["next_target"] <= zone["this_target"] + 0.05:
-                self._set_snapshot(
-                    **base_snapshot,
-                    status="next_switch_is_not_a_temperature_increase",
-                    predicted_start=None,
-                    lead_minutes=None,
-                    lead_capped=False,
-                )
-                return
-            if zone["next_target"] <= zone["current"] + self.target_tolerance:
-                self._set_snapshot(
-                    **base_snapshot,
-                    status="already_at_next_target",
-                    predicted_start=None,
-                    lead_minutes=0.0,
-                    lead_capped=False,
-                )
-                return
-
             lead, rate, capped = self.model.predict_lead_minutes(
                 current_c=zone["current"],
                 target_c=zone["next_target"],
@@ -643,21 +631,35 @@ class ZoneController:
                 safety_margin=self.safety_margin,
                 maximum_lead=self.maximum_lead,
             )
-            predicted_start = zone["next_time"] - timedelta(minutes=lead)
-            minutes_to_switch = (zone["next_time"] - now).total_seconds() / 60.0
-            status = "waiting_for_predicted_start"
-            if capped:
-                status = "waiting_for_capped_start"
+            decision = decide(
+                DecisionInput(
+                    now=now,
+                    enabled=self.enabled,
+                    system_mode=system_mode,
+                    zone_mode=zone["mode"],
+                    current_c=zone["current"],
+                    scheduled_target_c=zone["this_target"],
+                    next_target_c=zone["next_target"],
+                    next_switch=zone["next_time"],
+                    target_tolerance=self.target_tolerance,
+                    lead_minutes=lead,
+                    lead_capped=capped,
+                )
+            )
             self._set_snapshot(
                 **base_snapshot,
-                status=status,
-                predicted_start=predicted_start,
-                lead_minutes=round(lead, 1),
-                lead_capped=capped,
-                minutes_to_switch=round(minutes_to_switch, 1),
+                status=decision.status,
+                predicted_start=decision.predicted_start,
+                lead_minutes=(
+                    round(decision.lead_minutes, 1)
+                    if decision.lead_minutes is not None
+                    else None
+                ),
+                lead_capped=decision.lead_capped,
+                minutes_to_switch=round(decision.minutes_to_switch, 1),
             )
 
-            if not 0 < minutes_to_switch <= lead:
+            if not decision.should_start:
                 return
 
             # Re-check immediately before the write to reduce the race window with a
@@ -668,11 +670,7 @@ class ZoneController:
                 self._set_snapshot(status="protected_manual_zone_override")
                 return
             if (
-                abs(
-                    (
-                        latest_zone["next_time"] - zone["next_time"]
-                    ).total_seconds()
-                )
+                abs((latest_zone["next_time"] - zone["next_time"]).total_seconds())
                 > 120
                 or abs(latest_zone["next_target"] - zone["next_target"]) > 0.11
             ):
@@ -687,6 +685,7 @@ class ZoneController:
                 "outdoor_c": outdoor_c,
                 "predicted_rate": rate,
                 "predicted_lead_minutes": lead,
+                "lead_capped": capped,
                 "sample_recorded": False,
             }
             await self._save()
@@ -717,5 +716,7 @@ class ZoneController:
                 status="preheating",
                 preheating=True,
                 predicted_start=now,
+                lead_minutes=round(lead, 1),
+                lead_capped=capped,
+                predicted_rate=round(rate, 3),
             )
-

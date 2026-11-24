@@ -3,20 +3,17 @@
   "config": {
     "step": {
       "user": {
-        "title": "Choose an Evohome zone",
-        "description": "Evohome keeps its schedule and all valve/boiler control. The outdoor source is optional; leave it blank to use an assumed temperature.",
+        "title": "Choose your Evohome system",
+        "description": "One Optimum Start entry manages all zones on this controller. The outdoor source is optional; leave it blank to use an assumed temperature.",
         "data": {
-          "zone_entity": "Evohome heating zone",
           "controller_entity": "Evohome system controller",
           "outdoor_temperature_entity": "Outdoor temperature sensor or weather entity (optional)"
         }
       },
       "parameters": {
-        "title": "Prediction settings",
-        "description": "The defaults are deliberately conservative and can be changed later.",
+        "title": "Default zone settings",
+        "description": "These conservative defaults are offered when you add each zone. Each zone can then be tuned independently.",
         "data": {
-          "controller_entity": "Evohome system controller",
-          "outdoor_temperature_entity": "Outdoor temperature sensor or weather entity (optional)",
           "assumed_outdoor_temperature": "Assumed outdoor temperature when no entity is selected (°C)",
           "initial_heating_rate": "Initial heating rate (°C/hour)",
           "maximum_lead_minutes": "Maximum lead (minutes)",
@@ -28,38 +25,82 @@
       }
     },
     "error": {
-      "not_evohome_zone": "Select an Evohome heating-zone climate entity. It must expose status.setpoints and status.setpoint_status.",
       "not_evohome_controller": "Select the Evohome system/controller climate entity. It must expose status.system_mode_status.",
       "outdoor_unavailable": "The outdoor temperature or weather entity is unavailable or has no numeric current temperature.",
       "evohome_service_missing": "The official Evohome integration is not loaded or its set_zone_override action is unavailable."
     },
     "abort": {
-      "already_configured": "This Evohome zone already has an Optimum Start controller."
+      "already_configured": "This Evohome system already has an Optimum Start entry. Add another zone to the existing entry."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Optimum Start options",
+        "title": "System settings",
+        "description": "Weather and assumed outdoor temperature apply to every zone. Prediction values are defaults for zones added later; reconfigure an existing zone to tune it.",
         "data": {
-          "controller_entity": "Evohome system controller",
           "outdoor_temperature_entity": "Outdoor temperature sensor or weather entity (optional)",
           "assumed_outdoor_temperature": "Assumed outdoor temperature when no entity is selected (°C)",
-          "initial_heating_rate": "Initial heating rate (°C/hour)",
-          "maximum_lead_minutes": "Maximum lead (minutes)",
-          "warmup_delay_minutes": "Radiator warm-up delay (minutes)",
-          "safety_margin_minutes": "Safety margin (minutes)",
-          "target_tolerance": "Target tolerance (°C)",
-          "minimum_learning_rise": "Minimum rise for learning (°C)"
+          "initial_heating_rate": "Default initial heating rate (°C/hour)",
+          "maximum_lead_minutes": "Default maximum lead (minutes)",
+          "warmup_delay_minutes": "Default radiator warm-up delay (minutes)",
+          "safety_margin_minutes": "Default safety margin (minutes)",
+          "target_tolerance": "Default target tolerance (°C)",
+          "minimum_learning_rise": "Default minimum rise for learning (°C)"
         }
       }
     },
     "error": {
-      "not_evohome_zone": "The configured zone no longer exposes the expected Evohome status attributes.",
-      "not_evohome_controller": "Select the Evohome system/controller climate entity.",
+      "not_evohome_controller": "The configured Evohome system controller is unavailable.",
       "outdoor_unavailable": "The outdoor temperature or weather entity is unavailable or has no numeric current temperature.",
       "evohome_service_missing": "The official Evohome integration is not loaded or its set_zone_override action is unavailable."
     }
+  },
+  "config_subentries": {
+    "zone": {
+      "entry_type": "Zone",
+      "initiate_flow": {
+        "user": "Add zone",
+        "reconfigure": "Tune zone"
+      },
+      "step": {
+        "user": {
+          "title": "Add an Evohome zone",
+          "description": "Choose a room climate entity, not the whole-house controller.",
+          "data": {
+            "zone_entity": "Evohome heating zone"
+          }
+        },
+        "parameters": {
+          "title": "Zone prediction settings",
+          "description": "The zone starts disabled. Review its status before turning on its Enabled switch.",
+          "data": {
+            "initial_heating_rate": "Initial heating rate (°C/hour)",
+            "maximum_lead_minutes": "Maximum lead (minutes)",
+            "warmup_delay_minutes": "Radiator warm-up delay (minutes)",
+            "safety_margin_minutes": "Safety margin (minutes)",
+            "target_tolerance": "Target tolerance (°C)",
+            "minimum_learning_rise": "Minimum rise for learning (°C)"
+          }
+        },
+        "reconfigure": {
+          "title": "Tune this zone",
+          "data": {
+            "initial_heating_rate": "Initial heating rate (°C/hour)",
+            "maximum_lead_minutes": "Maximum lead (minutes)",
+            "warmup_delay_minutes": "Radiator warm-up delay (minutes)",
+            "safety_margin_minutes": "Safety margin (minutes)",
+            "target_tolerance": "Target tolerance (°C)",
+            "minimum_learning_rise": "Minimum rise for learning (°C)"
+          }
+        }
+      },
+      "error": {
+        "not_evohome_zone": "Select an Evohome heating-zone climate entity. It must expose status.setpoints and status.setpoint_status."
+      },
+      "abort": {
+        "already_configured": "This Evohome zone is already configured in this system."
+      }
+    }
   }
 }
-

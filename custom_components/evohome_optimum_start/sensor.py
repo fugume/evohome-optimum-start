@@ -10,63 +10,64 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfTime
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .const import DOMAIN
+from . import EvohomeOptimumStartConfigEntry
 from .controller import ZoneController
 from .entity import OptimumStartEntity
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: EvohomeOptimumStartConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up diagnostic sensors."""
-    controller: ZoneController = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        [
-            StatusSensor(controller),
-            ValueSensor(
-                controller,
-                "predicted_start",
-                "Predicted start",
-                SensorDeviceClass.TIMESTAMP,
-            ),
-            ValueSensor(
-                controller,
-                "lead_minutes",
-                "Lead time",
-                SensorDeviceClass.DURATION,
-                UnitOfTime.MINUTES,
-            ),
-            ValueSensor(
-                controller,
-                "predicted_rate",
-                "Predicted heating rate",
-                None,
-                "°C/h",
-                SensorStateClass.MEASUREMENT,
-            ),
-            ValueSensor(
-                controller,
-                "learned_base_rate",
-                "Learned base heating rate",
-                None,
-                "°C/h",
-                SensorStateClass.MEASUREMENT,
-            ),
-            ValueSensor(
-                controller,
-                "sample_count",
-                "Learning samples",
-                None,
-            ),
-        ]
-    )
+    for subentry_id, controller in entry.runtime_data.zones.items():
+        async_add_entities(
+            [
+                StatusSensor(controller),
+                ValueSensor(
+                    controller,
+                    "predicted_start",
+                    "Predicted start",
+                    SensorDeviceClass.TIMESTAMP,
+                    enabled_by_default=True,
+                ),
+                ValueSensor(
+                    controller,
+                    "lead_minutes",
+                    "Lead time",
+                    SensorDeviceClass.DURATION,
+                    UnitOfTime.MINUTES,
+                ),
+                ValueSensor(
+                    controller,
+                    "predicted_rate",
+                    "Predicted heating rate",
+                    None,
+                    "°C/h",
+                    SensorStateClass.MEASUREMENT,
+                ),
+                ValueSensor(
+                    controller,
+                    "learned_base_rate",
+                    "Learned base heating rate",
+                    None,
+                    "°C/h",
+                    SensorStateClass.MEASUREMENT,
+                ),
+                ValueSensor(
+                    controller,
+                    "sample_count",
+                    "Learning samples",
+                    None,
+                ),
+            ],
+            config_subentry_id=subentry_id,
+        )
 
 
 class StatusSensor(OptimumStartEntity, SensorEntity):
@@ -111,16 +112,18 @@ class ValueSensor(OptimumStartEntity, SensorEntity):
         device_class: SensorDeviceClass | None = None,
         unit: str | None = None,
         state_class: SensorStateClass | None = None,
+        *,
+        enabled_by_default: bool = False,
     ) -> None:
         super().__init__(controller, key, name)
         self.key = key
         self._attr_device_class = device_class
         self._attr_native_unit_of_measurement = unit
         self._attr_state_class = state_class
+        self._attr_entity_registry_enabled_default = enabled_by_default
 
     @property
     def native_value(self) -> float | int | datetime | None:
         """Return the current value."""
         value = self.controller.snapshot.get(self.key)
         return value if isinstance(value, (float, int, datetime)) else None
-

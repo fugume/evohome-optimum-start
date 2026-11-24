@@ -14,6 +14,8 @@ required = {
     "manifest.json",
     "config_flow.py",
     "controller.py",
+    "decision.py",
+    "system.py",
     "const.py",
     "entity.py",
     "sensor.py",
@@ -30,9 +32,7 @@ if missing:
 
 trees: dict[str, ast.AST] = {}
 for path in sorted(COMPONENT.glob("*.py")):
-    trees[path.name] = ast.parse(
-        path.read_text(encoding="utf-8"), filename=str(path)
-    )
+    trees[path.name] = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 # Regression check: Python accepts calls containing **base_snapshot plus an explicit
 # duplicate keyword, but raises TypeError only when that branch runs in Home Assistant.
@@ -94,4 +94,3 @@ if manifest.get("config_flow") is not True:
     raise SystemExit("Config flow is not enabled")
 
 print(f"Validated {len(required)} required files, Python syntax, and JSON metadata.")
-
