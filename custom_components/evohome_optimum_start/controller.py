@@ -211,17 +211,24 @@ class ZoneController:
         setpoint_status = _mapping(status.get("setpoint_status"))
         temperature_status = _mapping(status.get("temperature_status"))
 
-        current = _as_float(temperature_status.get("temperature"))
-        if current is None:
-            current = _as_float(state.attributes.get("current_temperature"))
+        # Prefer the climate entity's public current_temperature attribute. The
+        # official Evohome integration may populate it from the separately polled
+        # high-precision v1 API, while status.temperature_status comes from v2 and
+        # can remain stale for hours.
+        current = _as_float(state.attributes.get("current_temperature"))
+        current_source = "current_temperature"
+        if current is not None:
             unit = state.attributes.get("temperature_unit")
-            if current is not None and unit and unit != UnitOfTemperature.CELSIUS:
+            if unit and unit != UnitOfTemperature.CELSIUS:
                 try:
                     current = TemperatureConverter.convert(
                         current, unit, UnitOfTemperature.CELSIUS
                     )
                 except ValueError:
                     return None
+        else:
+            current = _as_float(temperature_status.get("temperature"))
+            current_source = "status.temperature_status"
 
         this_target = _as_float(setpoints.get("this_sp_temp"))
         next_target = _as_float(setpoints.get("next_sp_temp"))
@@ -238,6 +245,7 @@ class ZoneController:
             return None
         return {
             "current": current,
+            "current_source": current_source,
             "this_target": this_target,
             "next_target": next_target,
             "next_time": next_time,
@@ -557,6 +565,7 @@ class ZoneController:
                             else None
                         ),
                         current_temperature=zone["current"],
+                        current_temperature_source=zone["current_source"],
                         next_target=zone["next_target"],
                         outdoor_temperature=outdoor_c,
                         outdoor_temperature_source=outdoor_source,
@@ -571,6 +580,7 @@ class ZoneController:
                 "preheating": False,
                 "predicted_rate": round(rate, 3),
                 "current_temperature": zone["current"],
+                "current_temperature_source": zone["current_source"],
                 "current_scheduled_target": zone["this_target"],
                 "next_target": zone["next_target"],
                 "next_switch": zone["next_time"],
@@ -643,7 +653,6 @@ class ZoneController:
                 status=status,
                 predicted_start=predicted_start,
                 lead_minutes=round(lead, 1),
-                predicted_rate=round(rate, 3),
                 lead_capped=capped,
                 minutes_to_switch=round(minutes_to_switch, 1),
             )

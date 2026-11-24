@@ -212,6 +212,11 @@ The official Evohome cloud integration polls every five minutes by default, so s
 changes can lag. Prediction is checked every minute, but practical start-time
 resolution is bounded by the Evohome poll/update interval.
 
+The controller deliberately uses the climate entity's public `current_temperature`
+attribute. Current Home Assistant may populate this from Evohome's separately polled
+high-precision temperature API; the nested `status.temperature_status` value can be
+older and is used only as a fallback.
+
 ### Add weather later
 
 You can begin with the 7 °C fallback. After adding any Home Assistant weather

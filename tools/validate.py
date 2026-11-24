@@ -28,8 +28,50 @@ missing = sorted(path for path in required if not (COMPONENT / path).is_file())
 if missing:
     raise SystemExit(f"Missing required files: {', '.join(missing)}")
 
+trees: dict[str, ast.AST] = {}
 for path in sorted(COMPONENT.glob("*.py")):
-    ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    trees[path.name] = ast.parse(
+        path.read_text(encoding="utf-8"), filename=str(path)
+    )
+
+# Regression check: Python accepts calls containing **base_snapshot plus an explicit
+# duplicate keyword, but raises TypeError only when that branch runs in Home Assistant.
+controller_tree = trees["controller.py"]
+base_snapshot_keys: set[str] = set()
+for node in ast.walk(controller_tree):
+    if (
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "base_snapshot"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Dict)
+    ):
+        base_snapshot_keys = {
+            key.value
+            for key in node.value.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+for node in ast.walk(controller_tree):
+    if not isinstance(node, ast.Call):
+        continue
+    if not isinstance(node.func, ast.Attribute) or node.func.attr != "_set_snapshot":
+        continue
+    expands_base = any(
+        keyword.arg is None
+        and isinstance(keyword.value, ast.Name)
+        and keyword.value.id == "base_snapshot"
+        for keyword in node.keywords
+    )
+    duplicates = {
+        keyword.arg
+        for keyword in node.keywords
+        if keyword.arg is not None and keyword.arg in base_snapshot_keys
+    }
+    if expands_base and duplicates:
+        raise SystemExit(
+            "Duplicate _set_snapshot values: " + ", ".join(sorted(duplicates))
+        )
 
 json_files = [
     COMPONENT / "manifest.json",
