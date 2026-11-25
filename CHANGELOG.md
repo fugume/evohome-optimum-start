@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0
+
+- Retrieve supported hourly, daily, and twice-daily forecasts directly from the
+  configured `weather.*` entity using Home Assistant's response-returning
+  `weather.get_forecasts` action; refresh successful forecasts once per hour and
+  retry transient startup/provider failures after five minutes.
+- Calculate a stable design outdoor temperature from current conditions and the
+  three coldest forecast values within a configurable 48-hour horizon.
+- Compare the stable calculated requirement with a configured current manual boiler
+  setting and recommend a change only when it differs by at least 3 °C by default.
+- Never recommend lowering the manual setting when forecast data is unavailable;
+  retain current-weather protection for necessary increases.
+- Show keep/increase/decrease advice, forecast coverage, calculated requirement, and
+  the update-after-changing reminder on the dynamic dashboard.
+- Add forecast retrieval and hysteresis regression tests.
+
 ## 0.6.0
 
 - Record a bounded temperature trace during owned preheats and passive follow-up,

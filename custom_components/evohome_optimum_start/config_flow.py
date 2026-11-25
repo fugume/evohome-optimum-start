@@ -36,11 +36,14 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_ASSUMED_OUTDOOR,
     CONF_CONTROLLER_ENTITY,
+    CONF_CURRENT_FLOW_TEMP,
     CONF_FLOW_CURVE_SLOPE,
     CONF_FLOW_MAXIMUM,
     CONF_FLOW_MINIMUM,
+    CONF_FLOW_MINIMUM_CHANGE,
     CONF_FLOW_REFERENCE_OUTDOOR,
     CONF_FLOW_REFERENCE_TEMP,
+    CONF_FORECAST_HORIZON,
     CONF_INITIAL_RATE,
     CONF_MAX_LEAD,
     CONF_MINIMUM_RISE,
@@ -52,11 +55,14 @@ from .const import (
     CONF_ZONE_ENTITIES,
     CONF_ZONE_ENTITY,
     DEFAULT_ASSUMED_OUTDOOR,
+    DEFAULT_CURRENT_FLOW_TEMP,
     DEFAULT_FLOW_CURVE_SLOPE,
     DEFAULT_FLOW_MAXIMUM,
     DEFAULT_FLOW_MINIMUM,
+    DEFAULT_FLOW_MINIMUM_CHANGE,
     DEFAULT_FLOW_REFERENCE_OUTDOOR,
     DEFAULT_FLOW_REFERENCE_TEMP,
+    DEFAULT_FORECAST_HORIZON,
     DEFAULT_INITIAL_RATE,
     DEFAULT_MAX_LEAD,
     DEFAULT_MINIMUM_RISE,
@@ -163,6 +169,18 @@ def system_parameters_schema(values: Mapping[str, Any]) -> probatio.Schema:
             CONF_FLOW_MAXIMUM,
             default=values.get(CONF_FLOW_MAXIMUM, DEFAULT_FLOW_MAXIMUM),
         ): _number(40, 82, 1),
+        probatio.Required(
+            CONF_CURRENT_FLOW_TEMP,
+            default=values.get(CONF_CURRENT_FLOW_TEMP, DEFAULT_CURRENT_FLOW_TEMP),
+        ): _number(30, 82, 1),
+        probatio.Required(
+            CONF_FLOW_MINIMUM_CHANGE,
+            default=values.get(CONF_FLOW_MINIMUM_CHANGE, DEFAULT_FLOW_MINIMUM_CHANGE),
+        ): _number(1, 10, 1),
+        probatio.Required(
+            CONF_FORECAST_HORIZON,
+            default=values.get(CONF_FORECAST_HORIZON, DEFAULT_FORECAST_HORIZON),
+        ): _number(6, 96, 6),
     }
     fields.update(settings_schema(values).schema)
     return probatio.Schema(fields)

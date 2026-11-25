@@ -106,6 +106,81 @@ class FlowAdviceTests(unittest.TestCase):
         self.assertEqual(result["suggested_flow_temperature_c"], 57)
         self.assertEqual(result["confidence"], "medium")
 
+    def test_forecast_anticipates_cold_but_ignores_small_change(self) -> None:
+        result = recommend_flow_temperature(
+            outdoor_c=10,
+            reference_flow_c=55,
+            reference_outdoor_c=7,
+            curve_slope=1,
+            minimum_flow_c=50,
+            maximum_flow_c=65,
+            outcomes=[],
+            forecast_outdoor_temperatures=[6, 4, 2, 2, 2],
+            current_flow_c=55,
+            minimum_change_c=3,
+        )
+
+        self.assertEqual(result["design_outdoor_temperature_c"], 2.0)
+        self.assertEqual(result["calculated_flow_temperature_c"], 60)
+        self.assertEqual(result["suggested_flow_temperature_c"], 60)
+        self.assertTrue(result["change_recommended"])
+        self.assertEqual(result["recommendation"], "increase")
+
+    def test_stable_mild_forecast_can_recommend_reduction(self) -> None:
+        result = recommend_flow_temperature(
+            outdoor_c=12,
+            reference_flow_c=55,
+            reference_outdoor_c=7,
+            curve_slope=1,
+            minimum_flow_c=50,
+            maximum_flow_c=65,
+            outcomes=[],
+            forecast_outdoor_temperatures=[12, 13, 14, 12, 13],
+            current_flow_c=55,
+            minimum_change_c=3,
+        )
+
+        self.assertEqual(result["calculated_flow_temperature_c"], 50)
+        self.assertEqual(result["suggested_flow_temperature_c"], 50)
+        self.assertEqual(result["recommendation"], "decrease")
+
+    def test_no_forecast_prevents_a_short_lived_reduction(self) -> None:
+        result = recommend_flow_temperature(
+            outdoor_c=12,
+            reference_flow_c=55,
+            reference_outdoor_c=7,
+            curve_slope=1,
+            minimum_flow_c=50,
+            maximum_flow_c=65,
+            outcomes=[],
+            current_flow_c=55,
+            minimum_change_c=3,
+        )
+
+        self.assertEqual(result["calculated_flow_temperature_c"], 50)
+        self.assertEqual(result["suggested_flow_temperature_c"], 55)
+        self.assertFalse(result["change_recommended"])
+        self.assertEqual(result["recommendation"], "keep_current_forecast_unavailable")
+
+    def test_forecast_hysteresis_keeps_current_setting(self) -> None:
+        result = recommend_flow_temperature(
+            outdoor_c=7,
+            reference_flow_c=55,
+            reference_outdoor_c=7,
+            curve_slope=1,
+            minimum_flow_c=50,
+            maximum_flow_c=65,
+            outcomes=[],
+            forecast_outdoor_temperatures=[6, 6, 6],
+            current_flow_c=55,
+            minimum_change_c=3,
+        )
+
+        self.assertEqual(result["calculated_flow_temperature_c"], 56)
+        self.assertEqual(result["suggested_flow_temperature_c"], 55)
+        self.assertFalse(result["change_recommended"])
+        self.assertEqual(result["recommendation"], "keep_current")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -141,15 +141,37 @@ show the capacity-limit signature, and were observed within 3 °C of the current
 outdoor temperature.
 
 The system device has one **Suggested flow temperature** diagnostic sensor. Its
-initial, deliberately simple weather curve is:
+initial, deliberately simple heating curve is:
 
 `55 °C + 1 × (7 °C − current outdoor temperature)`
 
-and is bounded to 50–65 °C. Thus it suggests 50 °C at 12 °C outdoors, 55 °C at
-7 °C, and 60 °C at 2 °C. These anchor, slope, minimum, and maximum values are all
-editable under **Configure**. Learned multi-zone evidence can add 2 °C, but a warm
-outcome never lowers the curve automatically because an early optimum start can
-produce the same symptom.
+and is bounded to 50–65 °C. Thus its calculated requirement is 50 °C at 12 °C
+outdoors, 55 °C at 7 °C, and 60 °C at 2 °C. These anchor, slope, minimum, and
+maximum values are editable under **Configure**. Learned multi-zone evidence can add
+2 °C, but a warm outcome never lowers the curve automatically because an early
+optimum start can produce the same symptom.
+
+When the selected outdoor source is a `weather.*` entity, the integration calls Home
+Assistant's current `weather.get_forecasts` action normally once per hour. It accepts every
+forecast type the entity supports, uses temperatures within the configured horizon
+(48 hours by default), and treats the average of the three coldest values as the
+sustained forecast condition. The colder of that result and the current outdoor
+temperature drives the curve, so a cold spell is anticipated but a warm forecast
+does not ignore cold conditions that are already present.
+
+To avoid repeated trips to the boiler, the integration compares that calculated
+requirement with **Current manual boiler flow setting**. It recommends a physical
+change only when the difference reaches **Minimum worthwhile flow-temperature
+change** (3 °C by default). Otherwise the sensor remains at the current setting and
+reports `keep_current`. If no forecast can be obtained it may still recommend an
+increase needed by current cold weather, but never a reduction that might have to be
+reversed overnight.
+
+After changing the boiler, update **Current manual boiler flow setting** under the
+integration's **Configure** screen. This is simply configuration stored by the
+integration; it does not require a Home Assistant helper. The integration cannot
+read the physical boiler dial, so failing to update it would make subsequent
+comparisons use the old value.
 
 This sensor is advisory only: it never writes to the boiler. It is an approximation,
 not a substitute for Worcester's compatible weather-compensation control or a system
@@ -162,6 +184,7 @@ shared-cylinder constraint.
 
 References:
 
+- [Home Assistant `weather.get_forecasts` action](https://www.home-assistant.io/actions/weather.get_forecasts/)
 - [Worcester weather-compensation technical bulletin](https://installer.worcester-bosch.co.uk/support/literature/download/TB0113)
 - [Energy Saving Trust flow-temperature guidance](https://energysavingtrust.org.uk/should-i-turn-boilers-flow-temperature-down)
 
@@ -239,6 +262,9 @@ The system also offers these initial manual flow-advice settings:
 | Curve slope | 1.0 °C/°C | Add 1 °C flow per degree colder |
 | Minimum suggested flow | 50 °C | Mild-weather lower bound |
 | Maximum suggested flow | 65 °C | Cold-weather upper bound |
+| Current manual flow setting | 55 °C | Must match the physical boiler setting |
+| Minimum worthwhile change | 3 °C | Hysteresis against small adjustments |
+| Forecast horizon | 48 hours | Avoid changes that soon need reversing |
 
 After the system is created, Home Assistant immediately opens **Discover zones**.
 The integration finds available heating zones from the selected controller's
@@ -361,8 +387,10 @@ To install it as a separate dashboard:
 The overview shows configured/enabled counts and active preheats. The other tables
 show each zone's current and scheduled temperatures, next switch, predicted start,
 prediction accuracy, lead, learned rate, sample count, outdoor temperature, last
-cycle, latest evaluation, terminal approach, and overshoot. A system card shows the
-manual flow-temperature suggestion, evidence adjustment, confidence, and reason.
+cycle, latest evaluation, terminal approach, and overshoot. A system card says
+whether to keep, increase, or decrease the manual setting and shows the current
+setting, forecast design temperature, calculated requirement, forecast coverage,
+evidence adjustment, confidence, and reason.
 Enable switches remain on the individual zone devices
 by design. A commented native entity-card example at the end of the file can be
 copied into the view if direct controls are wanted for a particular room.
@@ -377,6 +405,9 @@ schedules enabled.
 - Begin with the known ~55 °C setting near 7 °C outdoors and treat the flow sensor as
   a trial recommendation. Change the boiler manually only after checking that its CH
   control is independent from any stored-hot-water safety requirement.
+- Each time you physically change the boiler, update **Current manual boiler flow
+  setting** in **Configure**. Increase the minimum worthwhile change or forecast
+  horizon if the advisor still asks for changes more frequently than you want.
 - Leave Advanced Load Scaling as-is initially. If you later enable it or substantially
   change the configured weather curve or heating hardware, reset learning in every
   zone. Do not reset for ordinary day-to-day changes made by following the same curve;

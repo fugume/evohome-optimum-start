@@ -25,6 +25,9 @@ CONF_FLOW_REFERENCE_OUTDOOR: Final = "flow_reference_outdoor_temperature"
 CONF_FLOW_CURVE_SLOPE: Final = "flow_curve_slope"
 CONF_FLOW_MINIMUM: Final = "minimum_flow_temperature"
 CONF_FLOW_MAXIMUM: Final = "maximum_flow_temperature"
+CONF_CURRENT_FLOW_TEMP: Final = "current_flow_temperature"
+CONF_FLOW_MINIMUM_CHANGE: Final = "minimum_flow_temperature_change"
+CONF_FORECAST_HORIZON: Final = "forecast_horizon_hours"
 
 DEFAULT_INITIAL_RATE: Final = 0.7
 DEFAULT_ASSUMED_OUTDOOR: Final = 7.0
@@ -38,6 +41,9 @@ DEFAULT_FLOW_REFERENCE_OUTDOOR: Final = 7.0
 DEFAULT_FLOW_CURVE_SLOPE: Final = 1.0
 DEFAULT_FLOW_MINIMUM: Final = 50.0
 DEFAULT_FLOW_MAXIMUM: Final = 65.0
+DEFAULT_CURRENT_FLOW_TEMP: Final = 55.0
+DEFAULT_FLOW_MINIMUM_CHANGE: Final = 3.0
+DEFAULT_FORECAST_HORIZON: Final = 48
 
 SAFE_SYSTEM_MODES: Final = frozenset(("Auto", "AutoWithReset"))
 FOLLOW_SCHEDULE: Final = "FollowSchedule"

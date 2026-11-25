@@ -91,11 +91,22 @@ views:
           {% if advisors %}
           {% set flow = advisors | first %}
           {% set a = flow.attributes %}
-          **Set the central-heating flow control to approximately {{ flow.state }} °C**<br>
+          {% if a.change_recommended %}
+          **Change the central-heating flow control from {{ '%.0f' | format(a.current_flow_temperature_c) }} °C to approximately {{ flow.state }} °C.**<br>
+          {% else %}
+          **Keep the central-heating flow control at {{ '%.0f' | format(a.current_flow_temperature_c) }} °C.**<br>
+          {% endif %}
           Outdoor temperature: {{ '%.1f °C' | format(a.outdoor_temperature) }}<br>
-          Weather-curve value: {{ '%.1f °C' | format(a.weather_curve_temperature_c) }}<br>
+          Forecast design temperature: {{ '%.1f °C' | format(a.design_outdoor_temperature_c) }}<br>
+          Calculated requirement: {{ '%.0f °C' | format(a.calculated_flow_temperature_c) }}<br>
+          Forecast data: {{ a.forecast_point_count }} points through {{ as_local(as_datetime(a.forecast_last_at)).strftime('%a %H:%M') if a.forecast_last_at else 'unavailable' }}<br>
           Evidence adjustment: {{ '%+.0f °C' | format(a.evidence_adjustment_c) }}<br>
+          Decision: {{ a.recommendation | replace('_', ' ') }}; changes smaller than {{ '%.0f °C' | format(a.minimum_change_temperature) }} are ignored.<br>
           Confidence: {{ a.confidence }} — {{ a.reason | replace('_', ' ') }}
+
+          After physically changing the boiler, update **Current manual boiler flow
+          setting** under the integration's **Configure** screen. Otherwise the next
+          comparison will still use the old setting.
 
           This is advisory only. It does not control the boiler. Do not
           apply a low central-heating setting to a shared cylinder circuit unless

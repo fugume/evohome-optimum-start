@@ -129,15 +129,34 @@ def recommend_flow_temperature(
     minimum_flow_c: float,
     maximum_flow_c: float,
     outcomes: Iterable[Mapping[str, Any]],
+    forecast_outdoor_temperatures: Iterable[float] = (),
+    current_flow_c: float | None = None,
+    minimum_change_c: float = 0.0,
 ) -> dict[str, Any]:
     """Return a cautious manual flow-temperature recommendation.
 
-    Evidence can raise the curve by two degrees when several independent rooms
-    show a terminal capacity limit. It cannot lower the curve automatically:
-    warm switchpoints can be caused by an early optimum start rather than excess
-    emitter temperature.
+    Forecast temperatures make the curve stable enough for a manual setting.
+    Evidence can raise it by two degrees when several independent rooms show a
+    terminal capacity limit. It cannot lower the curve automatically: warm
+    switchpoints can be caused by an early optimum start instead.
     """
-    raw_curve = reference_flow_c + curve_slope * (reference_outdoor_c - outdoor_c)
+    forecast_values = [
+        value
+        for raw_value in forecast_outdoor_temperatures
+        if (value := _number(raw_value)) is not None and -50 <= value <= 60
+    ]
+    coldest_values = sorted(forecast_values)[:3]
+    forecast_coldest_average = (
+        sum(coldest_values) / len(coldest_values) if coldest_values else None
+    )
+    design_outdoor_c = min(
+        outdoor_c,
+        forecast_coldest_average if forecast_coldest_average is not None else outdoor_c,
+    )
+
+    raw_curve = reference_flow_c + curve_slope * (
+        reference_outdoor_c - design_outdoor_c
+    )
     curve_temperature = max(minimum_flow_c, min(maximum_flow_c, raw_curve))
 
     usable = [
@@ -154,7 +173,7 @@ def recommend_flow_temperature(
         and (
             (observed_outdoor := _number(outcome.get("outdoor_temperature_c")))
             is not None
-            and abs(observed_outdoor - outdoor_c) <= 3.0
+            and abs(observed_outdoor - design_outdoor_c) <= 3.0
         )
     }
     evidence_adjustment = 2.0 if len(limited_zones) >= 2 else 0.0
@@ -173,9 +192,48 @@ def recommend_flow_temperature(
         confidence = "low"
         reason = "weather_curve_only"
 
+    calculated = int(advised + 0.5)
+    reported_current = _number(current_flow_c)
+    change_threshold_met = (
+        reported_current is not None
+        and abs(calculated - reported_current) >= minimum_change_c
+    )
+    # Without a forecast, increasing for current cold conditions is safe, but a
+    # reduction might only have to be undone when the temperature drops tonight.
+    forecast_allows_change = bool(forecast_values) or (
+        reported_current is not None and calculated > reported_current
+    )
+    change = change_threshold_met and forecast_allows_change
+    suggested = calculated if change or reported_current is None else reported_current
+    recommendation = (
+        "increase"
+        if change and reported_current is not None and calculated > reported_current
+        else "decrease"
+        if change and reported_current is not None and calculated < reported_current
+        else "keep_current_forecast_unavailable"
+        if change_threshold_met and not forecast_allows_change
+        else "keep_current"
+    )
+
     return {
-        "suggested_flow_temperature_c": int(advised + 0.5),
+        "suggested_flow_temperature_c": int(suggested + 0.5),
+        "calculated_flow_temperature_c": calculated,
+        "current_flow_temperature_c": reported_current,
+        "flow_temperature_difference_c": (
+            round(calculated - reported_current, 1)
+            if reported_current is not None
+            else None
+        ),
+        "change_recommended": change,
+        "recommendation": recommendation,
         "weather_curve_temperature_c": round(curve_temperature, 1),
+        "design_outdoor_temperature_c": round(design_outdoor_c, 1),
+        "forecast_coldest_three_average_c": (
+            round(forecast_coldest_average, 1)
+            if forecast_coldest_average is not None
+            else None
+        ),
+        "forecast_temperature_count": len(forecast_values),
         "evidence_adjustment_c": evidence_adjustment,
         "confidence": confidence,
         "reason": reason,

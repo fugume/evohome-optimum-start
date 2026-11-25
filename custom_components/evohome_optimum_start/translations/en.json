@@ -11,8 +11,8 @@
         }
       },
       "parameters": {
-        "title": "Default zone settings",
-        "description": "Zone defaults can be tuned independently. Flow advice is manual and advisory: the initial curve gives 55 °C at 7 °C outdoors, changing by 1 °C for each outdoor degree and staying between 50–65 °C.",
+        "title": "System and default zone settings",
+        "description": "Zone defaults can be tuned independently. Manual flow advice uses the current setting, the weather forecast, and a configurable minimum worthwhile change. Update the current setting here whenever you change the boiler.",
         "data": {
           "assumed_outdoor_temperature": "Assumed outdoor temperature when no entity is selected (°C)",
           "flow_reference_temperature": "Flow temperature at the reference outdoor temperature (°C)",
@@ -20,6 +20,9 @@
           "flow_curve_slope": "Flow increase per degree colder outdoors (°C/°C)",
           "minimum_flow_temperature": "Minimum suggested flow temperature (°C)",
           "maximum_flow_temperature": "Maximum suggested flow temperature (°C)",
+          "current_flow_temperature": "Current manual boiler flow setting (°C)",
+          "minimum_flow_temperature_change": "Minimum worthwhile flow-temperature change (°C)",
+          "forecast_horizon_hours": "Forecast horizon used to avoid repeated changes (hours)",
           "initial_heating_rate": "Initial heating rate (°C/hour)",
           "maximum_lead_minutes": "Maximum lead (minutes)",
           "warmup_delay_minutes": "Radiator warm-up delay (minutes)",
@@ -43,7 +46,7 @@
     "step": {
       "init": {
         "title": "System settings",
-        "description": "Weather and flow-advice settings apply to the system. Prediction values are defaults for zones added later. Update the curve anchor if you deliberately establish a different working flow temperature.",
+        "description": "Weather and flow-advice settings apply to the system. Update the current manual setting whenever you change the boiler; the forecast horizon and minimum change prevent small or short-lived recommendations.",
         "data": {
           "outdoor_temperature_entity": "Outdoor temperature sensor or weather entity (optional)",
           "assumed_outdoor_temperature": "Assumed outdoor temperature when no entity is selected (°C)",
@@ -52,6 +55,9 @@
           "flow_curve_slope": "Flow increase per degree colder outdoors (°C/°C)",
           "minimum_flow_temperature": "Minimum suggested flow temperature (°C)",
           "maximum_flow_temperature": "Maximum suggested flow temperature (°C)",
+          "current_flow_temperature": "Current manual boiler flow setting (°C)",
+          "minimum_flow_temperature_change": "Minimum worthwhile flow-temperature change (°C)",
+          "forecast_horizon_hours": "Forecast horizon used to avoid repeated changes (hours)",
           "initial_heating_rate": "Default initial heating rate (°C/hour)",
           "maximum_lead_minutes": "Default maximum lead (minutes)",
           "warmup_delay_minutes": "Default radiator warm-up delay (minutes)",
