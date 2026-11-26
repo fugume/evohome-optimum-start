@@ -115,7 +115,7 @@ def settings_schema(values: Mapping[str, Any]) -> probatio.Schema:
             probatio.Required(
                 CONF_INITIAL_RATE,
                 default=values.get(CONF_INITIAL_RATE, DEFAULT_INITIAL_RATE),
-            ): _number(0.15, 3.5, 0.05),
+            ): _number(0.15, 6.0, 0.05),
             probatio.Required(
                 CONF_MAX_LEAD,
                 default=values.get(CONF_MAX_LEAD, DEFAULT_MAX_LEAD),

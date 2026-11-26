@@ -78,11 +78,21 @@ area. It fits a small, recency-weighted model:
 
 `heating rate = rate at 10 °C outdoors + outdoor-temperature slope`
 
-The initial rate defaults to 0.7 °C/hour. With fewer than three samples, measured
-rates are blended conservatively with that value. Implausible/tiny cycles are ignored.
-Predicted lead is:
+The initial rate defaults to 0.7 °C/hour. Measured rates are blended with that
+value using confidence that increases monotonically from the first accepted sample;
+enabling outdoor regression at sample three no longer reduces confidence. Tiny or
+implausible cycles are ignored, while legitimate fast rooms can learn rates up to
+6 °C/hour. Predicted lead before timing feedback is:
 
-`warm-up delay + temperature rise / predicted rate + safety margin`
+`temperature rise / predicted effective rate + safety margin`
+
+Before the first accepted sample, the configured warm-up delay is also included.
+After learning begins, the measured effective rate already covers ordinary valve and
+boiler response delay, so that delay is not counted twice. The latest completed
+controlled heat-up is then blended in as bounded timing feedback. Rejected legacy
+fast-room samples receive more weight so an observed very-early arrival cannot simply
+repeat another capped start; no single outcome can move the next lead by more than
+60 minutes.
 
 and is capped at 180 minutes by default. This is well suited to learning your normal
 55 °C flow-temperature setup. A material flow-temperature change changes the plant's
@@ -108,8 +118,9 @@ the scheduled switchpoint and calculates:
   the room was cold and a positive value means it was warm;
 - **arrival offset:** the first observed target-reach time relative to the
   switchpoint, reported as minutes early or late; and
-- **on time:** whether the switchpoint temperature was within the zone's configured
-  target tolerance (0.2 °C by default).
+- **comfort on time:** whether the switchpoint temperature was within the zone's
+  configured target tolerance (0.2 °C by default); and
+- **start timing:** early, on time, or late using a 15-minute arrival window.
 
 If a room is still cold, the integration passively observes it for up to two hours
 after the switchpoint to measure late arrival. This observation never changes the
@@ -117,9 +128,10 @@ setpoint and stops if the user overrides the zone, the schedule changes, the sys
 leaves Auto, or the zone controller is disabled.
 
 The status entity retains up to 60 outcomes and publishes rolling values over the
-latest ten: on-time percentage, mean absolute temperature error, warm/cold bias, and
-mean arrival offset. Evohome and room-temperature polling limit timing precision, so
-each outcome also records how late the switchpoint observation itself occurred.
+latest ten: separate comfort and start-timing success percentages, mean absolute
+temperature error, warm/cold bias, and mean arrival offset. Evohome and room-
+temperature polling limit timing precision, so each outcome also records how late
+the switchpoint observation itself occurred.
 Resetting learning clears both heating samples and accuracy history.
 
 ### Terminal approach and manual flow-temperature advice
@@ -172,6 +184,11 @@ integration's **Configure** screen. This is simply configuration stored by the
 integration; it does not require a Home Assistant helper. The integration cannot
 read the physical boiler dial, so failing to update it would make subsequent
 comparisons use the old value.
+
+Do not change **Flow temperature at reference outdoor temperature** merely to record
+a boiler-dial adjustment. That field is the weather-curve anchor: increasing it
+raises every calculated recommendation. Only **Current manual boiler flow setting**
+records the physical control's present value.
 
 This sensor is advisory only: it never writes to the boiler. It is an approximation,
 not a substitute for Worcester's compatible weather-compensation control or a system
@@ -386,8 +403,9 @@ To install it as a separate dashboard:
 
 The overview shows configured/enabled counts and active preheats. The other tables
 show each zone's current and scheduled temperatures, next switch, predicted start,
-prediction accuracy, lead, learned rate, sample count, outdoor temperature, last
-cycle, latest evaluation, terminal approach, and overshoot. A system card says
+comfort and start-timing accuracy, model lead, bounded timing adjustment, final lead,
+learned rate, sample count, outdoor temperature, last cycle, terminal approach, and
+overshoot. A system card says
 whether to keep, increase, or decrease the manual setting and shows the current
 setting, forecast design temperature, calculated requirement, forecast coverage,
 evidence adjustment, confidence, and reason.

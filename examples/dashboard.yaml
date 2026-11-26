@@ -67,15 +67,15 @@ views:
           relative to the switchpoint. Rolling values use up to ten cycles.
 
           {% if zones %}
-          | Zone | Latest outcome | Switch error | Arrival | Observed | On time | Mean error | Bias |
-          |:--|:--|--:|:--|--:|--:|--:|--:|
+          | Zone | Comfort | Start timing | Switch error | Arrival | Comfort rate | Timing rate | Mean error |
+          |:--|:--|:--|--:|:--|--:|--:|--:|
           {% for zone in zones -%}
             {% set a = zone.attributes -%}
             {% set name = zone.name | replace(' Status', '') -%}
             {% set arrival = a.latest_arrival_offset_minutes -%}
             {% set observation = a.accuracy_observation_status or a.latest_observation_status -%}
             {% set arrival_text = ('%.0f min early' | format(-arrival)) if arrival is number and arrival < -0.5 else ('%.0f min late' | format(arrival)) if arrival is number and arrival > 0.5 else 'on time' if arrival is number else observation | replace('_', ' ') if observation else '—' -%}
-          | {{ name }} | {{ a.latest_accuracy_result | replace('_', ' ') if a.latest_accuracy_result else '—' }} | {{ '%+.2f °C' | format(a.latest_temperature_error_c) if a.latest_temperature_error_c is number else '—' }} | {{ arrival_text }} | {{ '+%.1f min' | format(a.latest_switch_observation_delay_minutes) if a.latest_switch_observation_delay_minutes is number else '—' }} | {{ '%.0f%%' | format(a.on_time_percentage) if a.on_time_percentage is number else '—' }} | {{ '%.2f °C' | format(a.mean_absolute_error_c) if a.mean_absolute_error_c is number else '—' }} | {{ '%+.2f °C' | format(a.temperature_bias_c) if a.temperature_bias_c is number else '—' }} |
+          | {{ name }} | {{ a.latest_accuracy_result | replace('_', ' ') if a.latest_accuracy_result else '—' }} | {{ a.latest_timing_result | replace('_', ' ') if a.latest_timing_result else '—' }} | {{ '%+.2f °C' | format(a.latest_temperature_error_c) if a.latest_temperature_error_c is number else '—' }} | {{ arrival_text }} | {{ '%.0f%%' | format(a.on_time_percentage) if a.on_time_percentage is number else '—' }} | {{ '%.0f%%' | format(a.timing_on_time_percentage) if a.timing_on_time_percentage is number else '—' }} | {{ '%.2f °C' | format(a.mean_absolute_error_c) if a.mean_absolute_error_c is number else '—' }} |
           {% endfor -%}
           {% else %}
           No prediction outcomes have been recorded yet.
@@ -96,6 +96,8 @@ views:
           {% else %}
           **Keep the central-heating flow control at {{ '%.0f' | format(a.current_flow_temperature_c) }} °C.**<br>
           {% endif %}
+          Recorded current boiler setting: {{ '%.0f °C' | format(a.current_flow_temperature_c) }}<br>
+          Weather-curve anchor: {{ '%.0f °C' | format(a.reference_flow_temperature) }} flow at {{ '%.1f °C' | format(a.reference_outdoor_temperature) }} outdoors<br>
           Outdoor temperature: {{ '%.1f °C' | format(a.outdoor_temperature) }}<br>
           Forecast design temperature: {{ '%.1f °C' | format(a.design_outdoor_temperature_c) }}<br>
           Calculated requirement: {{ '%.0f °C' | format(a.calculated_flow_temperature_c) }}<br>
@@ -126,12 +128,12 @@ views:
             | sort(attribute='name')
             | list %}
           {% if zones %}
-          | Zone | Lead | Rate | Samples | Outdoor | Last cycle | Evaluated |
-          |:--|--:|--:|--:|--:|:--|:--|
+          | Zone | Final lead | Model lead | Timing feedback | Rate | Samples | Last cycle |
+          |:--|--:|--:|--:|--:|--:|:--|
           {% for zone in zones -%}
             {% set a = zone.attributes -%}
             {% set name = zone.name | replace(' Status', '') -%}
-          | {{ name }} | {{ '%.0f min' | format(a.lead_minutes) if a.lead_minutes is number else '—' }} | {{ '%.2f °C/h' | format(a.predicted_rate) if a.predicted_rate is number else '—' }} | {{ a.sample_count if a.sample_count is number else '—' }} | {{ '%.1f °C' | format(a.outdoor_temperature) if a.outdoor_temperature is number else '—' }} | {{ a.last_cycle.result | replace('_', ' ') if a.last_cycle else '—' }} | {{ as_local(as_datetime(a.last_evaluated)).strftime('%H:%M') if a.last_evaluated else '—' }} |
+          | {{ name }} | {{ '%.0f min' | format(a.lead_minutes) if a.lead_minutes is number else '—' }} | {{ '%.0f min' | format(a.model_lead_minutes) if a.model_lead_minutes is number else '—' }} | {{ '%+.0f min' | format(a.timing_adjustment_minutes) if a.timing_adjustment_minutes is number else '—' }} | {{ '%.2f °C/h' | format(a.predicted_rate) if a.predicted_rate is number else '—' }} | {{ a.sample_count if a.sample_count is number else '—' }} | {{ a.last_cycle.result | replace('_', ' ') if a.last_cycle else '—' }} |
           {% endfor -%}
           {% else %}
           No learning diagnostics are available.

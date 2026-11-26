@@ -16,6 +16,7 @@ else:
     COMPONENT_ROOT = Path(__file__).parents[1]
     sys.path.insert(0, str(COMPONENT_ROOT))
     from custom_components.evohome_optimum_start.controller import ZoneController
+    from custom_components.evohome_optimum_start.learning import HeatingSample
 
 
 class FakeStates:
@@ -270,12 +271,14 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome["accuracy_result"], "on_time")
         self.assertAlmostEqual(outcome["temperature_error_c"], 0.1)
         self.assertEqual(outcome["arrival_offset_minutes"], -10.0)
+        self.assertEqual(outcome["timing_result"], "on_time")
         self.assertEqual(outcome["switch_observation_delay_minutes"], 0.5)
         self.assertEqual(outcome["observation_status"], "observing_overshoot")
         self.assertIsNotNone(controller.accuracy_observation)
         self.assertEqual(controller.snapshot["on_time_percentage"], 100.0)
         self.assertAlmostEqual(controller.snapshot["mean_absolute_error_c"], 0.1)
         self.assertAlmostEqual(controller.snapshot["temperature_bias_c"], 0.1)
+        self.assertEqual(controller.snapshot["timing_on_time_percentage"], 100.0)
         self.assertEqual(
             controller.snapshot["latest_switch_observation_delay_minutes"], 0.5
         )
@@ -294,6 +297,7 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
 
         outcome = controller.accuracy_outcomes[0]
         self.assertEqual(outcome["arrival_offset_minutes"], 5.0)
+        self.assertEqual(outcome["timing_result"], "on_time")
         self.assertEqual(outcome["switch_observation_delay_minutes"], 5.0)
 
     async def test_late_accuracy_observation_is_passive_and_completes(self) -> None:
@@ -346,9 +350,11 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(controller.accuracy_observation)
         outcome = controller.accuracy_outcomes[0]
         self.assertEqual(outcome["arrival_offset_minutes"], 20.0)
+        self.assertEqual(outcome["timing_result"], "late")
         self.assertEqual(outcome["observation_status"], "complete")
         self.assertEqual(controller.snapshot["on_time_percentage"], 0.0)
         self.assertEqual(controller.snapshot["latest_arrival_offset_minutes"], 20.0)
+        self.assertEqual(controller.snapshot["latest_timing_result"], "late")
         self.assertEqual(len(hass.services.calls), 1)
 
     async def test_late_accuracy_observation_times_out_without_writing(self) -> None:
@@ -440,6 +446,53 @@ class ZoneControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(summary["mean_absolute_error_c"], 0.1)
         self.assertAlmostEqual(summary["temperature_bias_c"], 0.1)
         self.assertEqual(summary["mean_arrival_offset_minutes"], -5.0)
+        self.assertEqual(summary["timing_on_time_percentage"], 100.0)
+
+    async def test_rejected_fast_cycle_shortens_next_capped_lead(self) -> None:
+        controller, hass = self.make_controller(15.1)
+        self.assertTrue(
+            controller.model.add(
+                HeatingSample(
+                    timestamp="2026-11-24T05:55:00+00:00",
+                    outdoor_c=4.0,
+                    start_c=15.1,
+                    end_c=19.8,
+                    target_c=20.0,
+                    minutes=84.9,
+                    reached_target=True,
+                ),
+                controller.minimum_rise,
+            )
+        )
+        controller.accuracy_outcomes = [
+            {
+                "switch_time": "2026-11-25T07:30:00+00:00",
+                "started_at": "2026-11-25T04:30:00+00:00",
+                "target_reached_at": "2026-11-25T05:45:18+00:00",
+                "arrival_offset_minutes": -104.7,
+                "temperature_error_c": -0.2,
+                "accuracy_result": "on_time",
+            }
+        ]
+        controller.last_cycle = {
+            "accuracy_switch_time": "2026-11-25T07:30:00+00:00",
+            "minutes": 75.3,
+            "rise_c": 4.7,
+            "rate_c_per_hour": 3.745,
+            "sample_accepted": False,
+        }
+
+        await controller.async_evaluate(datetime(2026, 11, 24, 6, 0, tzinfo=UTC))
+
+        self.assertEqual(len(hass.services.calls), 1)
+        self.assertFalse(controller.snapshot["lead_capped"])
+        self.assertLess(controller.snapshot["lead_minutes"], 105)
+        self.assertGreater(controller.snapshot["lead_minutes"], 90)
+        self.assertEqual(
+            controller.snapshot["timing_adjustment_source"],
+            "latest_rejected_cycle",
+        )
+        self.assertLess(controller.snapshot["timing_adjustment_minutes"], 0)
 
     async def test_manual_override_is_never_replaced(self) -> None:
         controller, hass = self.make_controller(17.5)

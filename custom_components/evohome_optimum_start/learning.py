@@ -122,9 +122,10 @@ class HeatingModel:
         if not usable:
             return clamp(self.initial_rate, MIN_RATE, MAX_RATE), 0.0
 
-        if len(usable) < 3:
-            measured = sum(sample.rate_c_per_hour for sample in usable) / len(usable)
-            confidence = len(usable) / 3.0
+        sample_count = len(usable)
+        confidence = sample_count / (sample_count + 0.5)
+        if sample_count < 3:
+            measured = sum(sample.rate_c_per_hour for sample in usable) / sample_count
             base = self.initial_rate * (1 - confidence) + measured * confidence
             return clamp(base, MIN_RATE, MAX_RATE), 0.0
 
@@ -155,8 +156,10 @@ class HeatingModel:
         slope = clamp(slope, -MAX_OUTDOOR_SLOPE, MAX_OUTDOOR_SLOPE)
         intercept = mean_y - slope * mean_x
 
-        # Regularize early fits toward the configured starting rate.
-        confidence = min(1.0, len(usable) / 12.0)
+        # Keep the same monotonic confidence rule when regression becomes possible.
+        # The previous split dropped confidence from 2/3 with two samples to 1/4
+        # with three, which could abruptly return a successfully learning zone to
+        # the maximum lead time.
         base = self.initial_rate * (1 - confidence) + intercept * confidence
         return clamp(base, MIN_RATE, MAX_RATE), slope
 
@@ -179,5 +182,10 @@ class HeatingModel:
         """Return lead, predicted rate, and whether the lead was capped."""
         rate = self.predict_rate(outdoor_c)
         rise = max(0.0, target_c - current_c)
-        raw_lead = warmup_delay + safety_margin + rise * 60.0 / rate
+        # A measured rate is an effective rate from override start to target reach,
+        # so it already includes the normal valve/boiler response delay. Retain the
+        # configured warm-up delay only for the unlearned initial estimate; adding
+        # it again after learning would double-count that delay.
+        startup_delay = 0.0 if self.samples else warmup_delay
+        raw_lead = startup_delay + safety_margin + rise * 60.0 / rate
         return min(maximum_lead, raw_lead), rate, raw_lead > maximum_lead

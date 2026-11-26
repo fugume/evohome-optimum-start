@@ -64,6 +64,8 @@ _ACCURACY_OBSERVATION_TIMEOUT = timedelta(hours=2)
 _OVERSHOOT_OBSERVATION_TIMEOUT = timedelta(minutes=30)
 _ACCURACY_WINDOW = 10
 _MAX_ACCURACY_OUTCOMES = 60
+_TIMING_ON_TIME_MINUTES = 15.0
+_MAX_TIMING_ADJUSTMENT_MINUTES = 60.0
 
 
 def _as_float(value: Any) -> float | None:
@@ -95,6 +97,17 @@ def _parse_datetime(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _timing_result(offset_minutes: float | None) -> str:
+    """Classify start timing separately from switchpoint comfort."""
+    if offset_minutes is None:
+        return "pending"
+    if offset_minutes < -_TIMING_ON_TIME_MINUTES:
+        return "early"
+    if offset_minutes > _TIMING_ON_TIME_MINUTES:
+        return "late"
+    return "on_time"
 
 
 class ZoneController:
@@ -152,8 +165,13 @@ class ZoneController:
             "latest_arrival_offset_minutes": None,
             "latest_switch_observation_delay_minutes": None,
             "latest_accuracy_result": None,
+            "latest_timing_result": None,
+            "timing_on_time_percentage": None,
             "latest_observation_status": None,
             "accuracy_observation_status": None,
+            "model_lead_minutes": None,
+            "timing_adjustment_minutes": 0.0,
+            "timing_adjustment_source": None,
             "latest_terminal_assessment": None,
             "latest_terminal_slowdown_ratio": None,
             "latest_terminal_dwell_minutes": None,
@@ -543,12 +561,19 @@ class ZoneController:
             for outcome in recent
             if isinstance(outcome.get("on_time"), bool)
         ]
+        timing_on_time = [abs(offset) <= _TIMING_ON_TIME_MINUTES for offset in arrivals]
         latest = self.accuracy_outcomes[-1] if self.accuracy_outcomes else {}
+        latest_arrival = _as_float(latest.get("arrival_offset_minutes"))
         return {
             "accuracy_cycle_count": len(self.accuracy_outcomes),
             "accuracy_window_count": len(recent),
             "on_time_percentage": (
                 round(sum(on_time) * 100.0 / len(on_time), 1) if on_time else None
+            ),
+            "timing_on_time_percentage": (
+                round(sum(timing_on_time) * 100.0 / len(timing_on_time), 1)
+                if timing_on_time
+                else None
             ),
             "mean_absolute_error_c": (
                 round(sum(abs(error) for error in errors) / len(errors), 3)
@@ -562,13 +587,13 @@ class ZoneController:
                 round(sum(arrivals) / len(arrivals), 1) if arrivals else None
             ),
             "latest_temperature_error_c": _as_float(latest.get("temperature_error_c")),
-            "latest_arrival_offset_minutes": _as_float(
-                latest.get("arrival_offset_minutes")
-            ),
+            "latest_arrival_offset_minutes": latest_arrival,
             "latest_switch_observation_delay_minutes": _as_float(
                 latest.get("switch_observation_delay_minutes")
             ),
             "latest_accuracy_result": latest.get("accuracy_result"),
+            "latest_timing_result": latest.get("timing_result")
+            or (_timing_result(latest_arrival) if latest_arrival is not None else None),
             "latest_observation_status": latest.get("observation_status"),
             "accuracy_observation_status": (
                 self.accuracy_observation.get("status")
@@ -584,6 +609,81 @@ class ZoneController:
             ),
             "latest_overshoot_c": _as_float(latest.get("overshoot_c")),
         }
+
+    def _apply_timing_feedback(
+        self, *, model_lead: float, current_rise: float
+    ) -> tuple[float, float, str | None]:
+        """Blend the latest observed heat-up duration into the next lead.
+
+        The rate model remains the primary predictor. A completed controlled cycle
+        supplies an independent duration check, which is especially important when
+        a plausible fast-room sample was rejected by an older release. Feedback is
+        bounded so one coarse Evohome reading cannot move the next start by more
+        than an hour.
+        """
+        latest = next(
+            (
+                outcome
+                for outcome in reversed(self.accuracy_outcomes)
+                if _as_float(outcome.get("arrival_offset_minutes")) is not None
+            ),
+            None,
+        )
+        if latest is None or current_rise <= 0:
+            return model_lead, 0.0, None
+
+        started = _parse_datetime(latest.get("started_at"))
+        reached = _parse_datetime(latest.get("target_reached_at"))
+        observed_minutes = (
+            (reached - started).total_seconds() / 60.0
+            if started is not None and reached is not None and reached > started
+            else None
+        )
+        previous_rise = _as_float(latest.get("learning_rise_c"))
+        sample_accepted = latest.get("learning_sample_accepted")
+
+        last_cycle_matches = bool(
+            self.last_cycle
+            and self.last_cycle.get("accuracy_switch_time") == latest.get("switch_time")
+        )
+        if last_cycle_matches and self.last_cycle:
+            observed_minutes = observed_minutes or _as_float(
+                self.last_cycle.get("minutes")
+            )
+            previous_rise = previous_rise or _as_float(self.last_cycle.get("rise_c"))
+            if not isinstance(sample_accepted, bool):
+                sample_accepted = self.last_cycle.get("sample_accepted")
+
+        if observed_minutes is None or not 5 <= observed_minutes <= 720:
+            return model_lead, 0.0, None
+
+        # Scale a duration only when the previous cycle exposes a meaningful rise.
+        # Older stored outcomes may lack it; using their unscaled duration is still
+        # safer than repeating a known two-hour-early capped start.
+        if previous_rise is not None and previous_rise >= self.minimum_rise:
+            rise_ratio = max(0.5, min(2.0, current_rise / previous_rise))
+            observed_minutes *= rise_ratio
+
+        empirical_lead = observed_minutes + self.safety_margin
+        if sample_accepted is False:
+            weight = 0.75
+            source = "latest_rejected_cycle"
+        elif sample_accepted is True:
+            weight = 0.35
+            source = "latest_accepted_cycle"
+        else:
+            weight = 0.5
+            source = "latest_cycle"
+        candidate = model_lead * (1.0 - weight) + empirical_lead * weight
+        adjustment = max(
+            -_MAX_TIMING_ADJUSTMENT_MINUTES,
+            min(_MAX_TIMING_ADJUSTMENT_MINUTES, candidate - model_lead),
+        )
+        adjusted = max(
+            self.safety_margin,
+            min(self.maximum_lead, model_lead + adjustment),
+        )
+        return adjusted, adjusted - model_lead, source
 
     async def _capture_switch_accuracy(
         self, *, now: datetime, current_c: float
@@ -627,6 +727,7 @@ class ZoneController:
                 self.active.get("predicted_lead_minutes")
             ),
             "target_c": target_c,
+            "start_c": _as_float(self.active.get("start_c")),
             "outdoor_temperature_c": _as_float(self.active.get("outdoor_c")),
             "temperature_at_switch": current_c,
             "temperature_error_c": round(temperature_error, 3),
@@ -640,12 +741,28 @@ class ZoneController:
                 if reached_at
                 else None
             ),
+            "timing_result": _timing_result(
+                round((reached_at - switch_time).total_seconds() / 60.0, 1)
+                if reached_at
+                else None
+            ),
             "on_time": on_time,
             "accuracy_result": accuracy_result,
             "observation_status": (
                 "observing_overshoot" if reached_at else "observing_late"
             ),
         }
+        if self.last_cycle:
+            outcome.update(
+                {
+                    "learning_minutes": _as_float(self.last_cycle.get("minutes")),
+                    "learning_rise_c": _as_float(self.last_cycle.get("rise_c")),
+                    "learning_rate_c_per_hour": _as_float(
+                        self.last_cycle.get("rate_c_per_hour")
+                    ),
+                    "learning_sample_accepted": self.last_cycle.get("sample_accepted"),
+                }
+            )
         outcome.update(
             analyse_terminal_approach(
                 self.active.get("temperature_trace", []),
@@ -661,6 +778,7 @@ class ZoneController:
             "temperature_at_switch": current_c,
             "temperature_error_c": round(temperature_error, 3),
             "arrival_offset_minutes": outcome["arrival_offset_minutes"],
+            "timing_result": outcome["timing_result"],
             "accuracy_result": accuracy_result,
             "accuracy_observation_status": outcome["observation_status"],
             "switch_observation_delay_minutes": outcome[
@@ -705,11 +823,11 @@ class ZoneController:
             "observation_finished_at": now.isoformat(),
         }
         if reached_target:
+            arrival_offset = round((now - switch_time).total_seconds() / 60.0, 1)
             updates |= {
                 "target_reached_at": now.isoformat(),
-                "arrival_offset_minutes": round(
-                    (now - switch_time).total_seconds() / 60.0, 1
-                ),
+                "arrival_offset_minutes": arrival_offset,
+                "timing_result": _timing_result(arrival_offset),
             }
         target_c = _as_float(self.accuracy_observation.get("target_c"))
         if target_c is not None:
@@ -734,6 +852,11 @@ class ZoneController:
                 "accuracy_observation_status": status,
                 **(
                     {"arrival_offset_minutes": updates["arrival_offset_minutes"]}
+                    if reached_target
+                    else {}
+                ),
+                **(
+                    {"timing_result": updates["timing_result"]}
                     if reached_target
                     else {}
                 ),
@@ -792,15 +915,15 @@ class ZoneController:
                         now=now, status="complete", reached_target=True
                     )
                     return
+                arrival_offset = round((now - switch_time).total_seconds() / 60.0, 1)
                 for index in range(len(self.accuracy_outcomes) - 1, -1, -1):
                     outcome = self.accuracy_outcomes[index]
                     if outcome.get("switch_time") == switch_time.isoformat():
                         self.accuracy_outcomes[index] = {
                             **outcome,
                             "target_reached_at": now.isoformat(),
-                            "arrival_offset_minutes": round(
-                                (now - switch_time).total_seconds() / 60.0, 1
-                            ),
+                            "arrival_offset_minutes": arrival_offset,
+                            "timing_result": _timing_result(arrival_offset),
                             "observation_status": "observing_overshoot",
                         }
                         break
@@ -815,9 +938,8 @@ class ZoneController:
                 ):
                     self.last_cycle = {
                         **self.last_cycle,
-                        "arrival_offset_minutes": round(
-                            (now - switch_time).total_seconds() / 60.0, 1
-                        ),
+                        "arrival_offset_minutes": arrival_offset,
+                        "timing_result": _timing_result(arrival_offset),
                         "accuracy_observation_status": "observing_overshoot",
                     }
                 await self._save()
@@ -1098,6 +1220,16 @@ class ZoneController:
                             round(active_lead, 1) if active_lead is not None else None
                         ),
                         lead_capped=bool(self.active.get("lead_capped", False)),
+                        model_lead_minutes=_as_float(
+                            self.active.get("model_lead_minutes")
+                        ),
+                        timing_adjustment_minutes=_as_float(
+                            self.active.get("timing_adjustment_minutes")
+                        )
+                        or 0.0,
+                        timing_adjustment_source=self.active.get(
+                            "timing_adjustment_source"
+                        ),
                         predicted_rate=(
                             round(active_rate, 3)
                             if active_rate is not None
@@ -1142,13 +1274,28 @@ class ZoneController:
                 "system_mode": system_mode,
                 "zone_mode": zone["mode"],
             }
-            lead, rate, capped = self.model.predict_lead_minutes(
+            model_lead, rate, model_capped = self.model.predict_lead_minutes(
                 current_c=zone["current"],
                 target_c=zone["next_target"],
                 outdoor_c=outdoor_c,
                 warmup_delay=self.warmup_delay,
                 safety_margin=self.safety_margin,
                 maximum_lead=self.maximum_lead,
+            )
+            rising_switch = (
+                zone["next_target"] > zone["this_target"] + 0.01
+                and zone["current"] < zone["next_target"] - self.target_tolerance
+            )
+            if rising_switch:
+                lead, timing_adjustment, timing_source = self._apply_timing_feedback(
+                    model_lead=model_lead,
+                    current_rise=max(0.0, zone["next_target"] - zone["current"]),
+                )
+            else:
+                lead, timing_adjustment, timing_source = model_lead, 0.0, None
+            capped = bool(
+                lead >= self.maximum_lead - 0.01
+                and (model_capped or timing_adjustment > 0)
             )
             decision = decide(
                 DecisionInput(
@@ -1175,6 +1322,9 @@ class ZoneController:
                     else None
                 ),
                 lead_capped=decision.lead_capped,
+                model_lead_minutes=(round(model_lead, 1) if rising_switch else None),
+                timing_adjustment_minutes=round(timing_adjustment, 1),
+                timing_adjustment_source=timing_source,
                 minutes_to_switch=round(decision.minutes_to_switch, 1),
             )
 
@@ -1210,6 +1360,9 @@ class ZoneController:
                 "predicted_rate": rate,
                 "predicted_lead_minutes": lead,
                 "lead_capped": capped,
+                "model_lead_minutes": model_lead,
+                "timing_adjustment_minutes": timing_adjustment,
+                "timing_adjustment_source": timing_source,
                 "sample_recorded": False,
                 "temperature_trace": [
                     {"at": now.isoformat(), "temperature_c": zone["current"]}
@@ -1248,4 +1401,7 @@ class ZoneController:
                 lead_minutes=round(lead, 1),
                 lead_capped=capped,
                 predicted_rate=round(rate, 3),
+                model_lead_minutes=round(model_lead, 1),
+                timing_adjustment_minutes=round(timing_adjustment, 1),
+                timing_adjustment_source=timing_source,
             )

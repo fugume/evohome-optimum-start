@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.0
+
+- Accept plausible fast-room heating samples up to 6 °C/hour, including the
+  previously rejected 3.745 °C/hour diagnostic case.
+- Replace the discontinuous early-learning weighting with monotonically increasing
+  confidence, so adding the third sample cannot return a zone to a conservative
+  maximum lead.
+- Treat learned rates as effective override-to-target rates and avoid counting the
+  configured initial warm-up delay again after learning begins.
+- Blend the latest observed controlled heat-up duration into the next prediction as
+  bounded timing feedback. Give a rejected legacy sample extra recovery weight and
+  limit any one-cycle adjustment to 60 minutes.
+- Report switchpoint comfort and start timing separately, with early/on-time/late
+  timing classification and a rolling timing success percentage.
+- Show model lead, timing feedback, final lead, and clearer manual-flow curve/current
+  labels on the example dashboard.
+
 ## 0.7.0
 
 - Retrieve supported hourly, daily, and twice-daily forecasts directly from the

@@ -87,6 +87,45 @@ class HeatingModelTests(unittest.TestCase):
         self.assertGreater(predicted, 0.7)
         self.assertLess(predicted, 1.0)
 
+    def test_accepts_plausible_fast_room_sample(self) -> None:
+        model = HeatingModel(0.7, [])
+        fast = HeatingSample(
+            timestamp="2026-11-26T05:45:49+00:00",
+            outdoor_c=3.9,
+            start_c=15.1,
+            end_c=19.8,
+            target_c=20.0,
+            minutes=75.3,
+            reached_target=True,
+        )
+
+        self.assertTrue(model.add(fast, 0.3))
+        self.assertAlmostEqual(model.samples[0].rate_c_per_hour, 3.745, places=3)
+
+    def test_confidence_increases_when_third_sample_enables_regression(self) -> None:
+        model = HeatingModel(0.7, [])
+        predicted_rates: list[float] = []
+        for index in range(3):
+            self.assertTrue(model.add(sample(5, 2.0, index), 0.3))
+            predicted_rates.append(model.predict_rate(5))
+
+        self.assertGreater(predicted_rates[1], predicted_rates[0])
+        self.assertGreaterEqual(predicted_rates[2], predicted_rates[1])
+
+    def test_learned_effective_rate_does_not_double_count_warmup_delay(self) -> None:
+        model = HeatingModel(1.0, [sample(5, 1.0, 0)])
+
+        lead, _rate, _capped = model.predict_lead_minutes(
+            current_c=19,
+            target_c=20,
+            outdoor_c=5,
+            warmup_delay=10,
+            safety_margin=10,
+            maximum_lead=180,
+        )
+
+        self.assertEqual(lead, 70.0)
+
 
 if __name__ == "__main__":
     unittest.main()
